@@ -16,12 +16,16 @@ import {
   Sun,
   SunMoon,
   Table2,
+  TerminalSquare,
   X,
 } from "lucide-react";
-import { newConnection, useApp, type Session, type Tab } from "../lib/store";
+import { local, newConnection, useApp, type Session, type Tab } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { schemaPrompt } from "../lib/ai";
-import { Kbd, TagBadge } from "./ui";
+import { Kbd, TagBadge, useDrag } from "./ui";
+import { useTableMenu } from "./TableActions";
+import { Console } from "./Console";
+import { Select } from "./controls";
 import { TableView } from "./TableView";
 import { QueryView } from "./QueryView";
 
@@ -117,6 +121,13 @@ export function Sidebar({ session }: { session: Session }) {
   const c = session.connection;
   const toast = useApp((s) => s.toast);
   const [copying, setCopying] = useState(false);
+  const [width, setWidth] = useState(() => local.get("tabla.sidebarWidth", 272));
+  const startW = useRef(width);
+  const saveWidth = (w: number) => {
+    setWidth(w);
+    local.set("tabla.sidebarWidth", w);
+  };
+  const resize = useDrag((dx) => saveWidth(Math.max(200, Math.min(520, startW.current + dx))));
 
   const copySchema = async () => {
     setCopying(true);
@@ -149,9 +160,14 @@ export function Sidebar({ session }: { session: Session }) {
     return { tables: list.filter((t) => t.kind === "table"), views: list.filter((t) => t.kind !== "table") };
   }, [session.tables, q]);
 
+  const tableMenu = useTableMenu(session);
   const item = (t: (typeof session.tables)[number]) => (
     <button
       key={t.name}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        tableMenu.open(e, t);
+      }}
       className={`sb-item ${active?.kind === "table" && active.table === t.name && active.schema === session.schema ? "active" : ""}`}
       onClick={() => openTable(session.id, session.schema, t.name)}
       onDoubleClick={() => openTable(session.id, session.schema, t.name, "structure")}
@@ -164,7 +180,17 @@ export function Sidebar({ session }: { session: Session }) {
   );
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" style={{ width }}>
+      {tableMenu.element}
+      <div
+        className={`sb-resize ${resize.active ? "on" : ""}`}
+        onMouseDown={(e) => {
+          startW.current = width;
+          resize.start(e);
+        }}
+        onDoubleClick={() => saveWidth(272)}
+        title="Drag to resize · double-click to reset"
+      />
       <div className="titlebar-space" data-tauri-drag-region />
       <div className="sb-head">
         <div className="sb-conn">
@@ -185,17 +211,16 @@ export function Sidebar({ session }: { session: Session }) {
           </button>
         </div>
         {session.schemas.length > 1 && (
-          <select
-            className="select sm"
-            style={{ marginBottom: 8 }}
-            value={session.schema}
-            onChange={(e) => setSchema(session.id, e.target.value)}
-            title={c.driver === "mysql" ? "Database" : "Schema"}
-          >
-            {session.schemas.map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
+          <div style={{ marginBottom: 8 }}>
+            <Select
+              size="sm"
+              className="w-full"
+              value={session.schema}
+              title={c.driver === "mysql" ? "Database" : "Schema"}
+              options={session.schemas.map((s) => ({ value: s, label: s }))}
+              onChange={(v) => setSchema(session.id, v)}
+            />
+          </div>
         )}
         <div className="sb-search">
           <Search />
@@ -263,6 +288,19 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
   const closeTab = useApp((s) => s.closeTab);
   const newQuery = useApp((s) => s.newQuery);
   const tabsRef = useRef<HTMLDivElement>(null);
+  const [consoleOpen, setConsoleOpen] = useState(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
+        e.preventDefault();
+        setConsoleOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible]);
 
   useEffect(() => {
     tabsRef.current?.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -303,6 +341,9 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
             <Plus />
           </button>
           <div className="spacer" data-tauri-drag-region style={{ height: "100%" }} />
+          <button className={`icon-btn ${consoleOpen ? "on" : ""}`} onClick={() => setConsoleOpen(!consoleOpen)} title="Console: every query Tabla sends (Mod+Shift+C)">
+            <TerminalSquare />
+          </button>
         </div>
 
         {session.tabs.length === 0 && <EmptyWorkspace session={session} />}
@@ -313,6 +354,7 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
             <QueryView key={t.id} session={session} tab={t} active={visible && t.id === session.activeTabId} />
           ),
         )}
+        {consoleOpen && <Console session={session} onClose={() => setConsoleOpen(false)} />}
       </main>
     </div>
   );

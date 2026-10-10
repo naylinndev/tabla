@@ -234,7 +234,10 @@ impl Session {
             ($pool:expr) => {{
                 let mut tx = $pool.begin().await?;
                 for s in &stmts {
-                    tx.execute(AssertSqlSafe(s.clone())).await?;
+                    let started = std::time::Instant::now();
+                    let res = tx.execute(AssertSqlSafe(s.clone())).await;
+                    self.record(s, started, res.as_ref().map(|_| "ok".to_string()).map_err(crate::error::db_message));
+                    res?;
                 }
                 tx.commit().await?;
             }};
@@ -245,7 +248,10 @@ impl Session {
             // MySQL commits each DDL statement implicitly.
             Pool::My(p) => {
                 for (i, s) in stmts.iter().enumerate() {
-                    if let Err(e) = p.execute(AssertSqlSafe(s.clone())).await {
+                    let started = std::time::Instant::now();
+                    let res = p.execute(AssertSqlSafe(s.clone())).await;
+                    self.record(s, started, res.as_ref().map(|_| "ok".to_string()).map_err(crate::error::db_message));
+                    if let Err(e) = res {
                         return Err(AppError::msg(format!(
                             "{} (statement {} of {}; the {} before it were applied, because MySQL can't roll back structure changes)",
                             AppError::from(e),

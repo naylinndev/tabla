@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { Fingerprint, Network, ShieldCheck, Bot, LifeBuoy, BookOpen, CheckCircle2, ChevronDown, FolderOpen, Info, KeyRound, Link2, Lock, ShieldAlert, XCircle, Zap } from "lucide-react";
+import { useRef, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Fingerprint, Network, ShieldCheck, Bot, LifeBuoy, BookOpen, CheckCircle2, ChevronDown, FolderOpen, Info, KeyRound, Link2, Lock, ShieldAlert, XCircle, Zap } from "lucide-react";
 import { api, errorMessage, type ConnectionConfig, type Driver, type EnvTag, type SshConfig, type SslMode } from "../lib/api";
 import { newConnection as newConnectionDefaults, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { PROVIDERS, detectProvider, providerById, type Provider } from "../lib/providers";
 import { explainError } from "../lib/errorHelp";
 import { Modal, Switch } from "./ui";
+import { Select } from "./controls";
 
 const COLORS = ["#7c6cff", "#5b8def", "#22b8cf", "#3ecf8e", "#f5b84b", "#ff8a4c", "#ff5d6c", "#e86bd0", "#8a909d"];
 const TAGS: { value: EnvTag; label: string }[] = [
@@ -76,6 +77,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
   const [guideOpen, setGuideOpen] = useState(isNew);
   const [tab, setTab] = useState<DialogTab>("connection");
+  const bodyRef = useRef<HTMLFormElement>(null);
   const [sshSecret, setSshSecret] = useState(initial.sshSecret ?? "");
   const [sshTouched, setSshTouched] = useState(!!initial.sshSecret);
   const provider = providerById(f.provider, f.driver);
@@ -165,6 +167,23 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           { id: "ssl", label: "SSL", on: f.sslMode === "require" || f.sslMode === "verify-full" || !!f.sslCa },
           { id: "options", label: "Options", on: f.readOnly || f.aiAccess || f.tag === "production" },
         ];
+  const step = Math.max(0, tabs.findIndex((t) => t.id === tab));
+  const lastStep = step === tabs.length - 1;
+  const goTo = (id: DialogTab) => {
+    setTab(id);
+    bodyRef.current?.scrollTo({ top: 0 });
+  };
+  const next = () => {
+    // Light validation so a step can't be skipped with the essentials missing.
+    if (tab === "connection") {
+      if (f.driver === "sqlite" ? !f.database.trim() : !f.host.trim())
+        return setTest({ ok: false, msg: f.driver === "sqlite" ? "Choose a database file first" : "Enter the host first" });
+    }
+    if (tab === "ssh" && f.ssh.enabled && !f.ssh.host.trim()) return setTest({ ok: false, msg: "Enter the SSH host, or turn the tunnel off" });
+    setTest(null);
+    goTo(tabs[Math.min(tabs.length - 1, step + 1)].id);
+  };
+  const back = () => goTo(tabs[Math.max(0, step - 1)].id);
   const setSsh = <K extends keyof SshConfig>(k: K, v: SshConfig[K]) => {
     setF((x) => ({ ...x, ssh: { ...x.ssh, [k]: v } }));
     setTest(null);
@@ -187,26 +206,29 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           <p>Passwords and SSH secrets are stored in your system keychain, never on disk.</p>
         </div>
       </div>
-      <div className="dialog-tabs" role="tablist">
-        {tabs.map((t) => (
+      <div className={`dialog-tabs ${isNew ? "wizard" : ""}`} role="tablist">
+        {tabs.map((t, i) => (
           <button
             key={t.id}
             type="button"
             role="tab"
             aria-selected={tab === t.id}
-            className={tab === t.id ? "on" : ""}
-            onClick={() => setTab(t.id)}
+            className={`${tab === t.id ? "on" : ""} ${isNew && i < step ? "done" : ""}`}
+            onClick={() => goTo(t.id)}
           >
+            {isNew && <span className="step-num">{i < step ? <Check /> : i + 1}</span>}
             {t.label}
             {t.on && <span className="tab-dot" />}
           </button>
         ))}
       </div>
       <form
+        ref={bodyRef}
         className="modal-body"
         onSubmit={(e) => {
           e.preventDefault();
-          submit(true);
+          if (isNew && !lastStep) next();
+          else submit(true);
         }}
       >
         {tab === "connection" && (
@@ -298,7 +320,6 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           <label>Name</label>
           <input
             className="input"
-            autoFocus
             placeholder="My database"
             value={f.name}
             onChange={(e) => set("name", e.target.value)}
@@ -569,13 +590,12 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
         <div className="grid-2b">
           <div className="field">
             <label>Environment</label>
-            <select className="select" value={f.tag} onChange={(e) => set("tag", e.target.value as EnvTag)}>
-              {TAGS.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+            <Select
+              className="w-full"
+              value={f.tag}
+              options={TAGS.map((t) => ({ value: t.value, label: t.label, icon: <span className={`env-dot ${t.value}`} /> }))}
+              onChange={(v) => set("tag", v as EnvTag)}
+            />
           </div>
           <div className="field">
             <label>Color</label>
@@ -651,13 +671,26 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
         <button className="btn ghost" type="button" onClick={close}>
           Cancel
         </button>
-        <button className="btn" type="button" onClick={() => submit(false)} disabled={busy !== null}>
-          <KeyRound /> Save
-        </button>
-        <button className="btn primary" type="button" onClick={() => submit(true)} disabled={busy !== null}>
-          {busy === "save" && <span className="spinner" style={{ borderTopColor: "#fff" }} />}
-          Save & connect
-        </button>
+        {isNew && step > 0 && (
+          <button className="btn" type="button" onClick={back}>
+            <ChevronLeft /> Back
+          </button>
+        )}
+        {isNew && !lastStep ? (
+          <button className="btn primary" type="button" onClick={next}>
+            Next <ChevronRight />
+          </button>
+        ) : (
+          <>
+            <button className="btn" type="button" onClick={() => submit(false)} disabled={busy !== null}>
+              <KeyRound /> Save
+            </button>
+            <button className="btn primary" type="button" onClick={() => submit(true)} disabled={busy !== null}>
+              {busy === "save" && <span className="spinner" style={{ borderTopColor: "#fff" }} />}
+              Save & connect
+            </button>
+          </>
+        )}
       </div>
     </Modal>
   );

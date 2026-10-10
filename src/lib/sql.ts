@@ -42,7 +42,7 @@ function likeEscape(v: string) {
   return v.replace(/[\\%_]/g, (m) => "\\" + m);
 }
 
-export function buildFilter(driver: Driver, filters: Filter[]): string {
+export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR" = "AND"): string {
   const parts = filters
     .filter((f) => f.enabled && f.column)
     .map((f) => {
@@ -70,7 +70,7 @@ export function buildFilter(driver: Driver, filters: Filter[]): string {
           return `${col} ${f.op === "!=" ? "<>" : f.op} ${lit(f.value)}`;
       }
     });
-  return parts.join(" AND ");
+  return parts.length > 1 && join === "OR" ? parts.map((p) => `(${p})`).join(" OR ") : parts.join(` ${join} `);
 }
 
 const NUMERIC = /int|serial|numeric|decimal|float|double|real|money|number|bit\b/i;

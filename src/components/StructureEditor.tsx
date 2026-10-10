@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Code2, GripVertical, Info, KeyRound, Plus, RotateCcw, ShieldAlert, Trash2, Undo2, Wand2 } from "lucide-react";
+import { AlertTriangle, Check, Code2, Copy, GripVertical, Info, KeyRound, Minus, Plus, RefreshCw, RotateCcw, ShieldAlert, Wand2 } from "lucide-react";
 import { api, errorMessage, type AlterColumn, type AlterRequest, type Driver, type TableStructure } from "../lib/api";
 import { useApp, type Session } from "../lib/store";
+import { joinType, splitType } from "../lib/format";
 import { Modal } from "./ui";
+import { Checkbox, Combobox } from "./controls";
 
 interface Draft {
   key: string;
@@ -13,11 +15,14 @@ interface Draft {
   defaultValue: string;
   dropped: boolean;
   pk: boolean;
+  keyKind: string;
+  extra: string;
 }
 
+/** Base type names (length goes in its own column). */
 const TYPES: Record<Driver, string[]> = {
-  postgres: ["text", "varchar(255)", "integer", "bigint", "serial", "bigserial", "boolean", "numeric(12,2)", "real", "double precision", "date", "timestamp", "timestamptz", "jsonb", "uuid", "bytea", "text[]"],
-  mysql: ["varchar(255)", "text", "int", "bigint", "tinyint(1)", "decimal(10,2)", "double", "date", "datetime", "timestamp", "json", "blob", "char(36)"],
+  postgres: ["text", "character varying", "character", "integer", "bigint", "smallint", "serial", "bigserial", "boolean", "numeric", "real", "double precision", "date", "time without time zone", "timestamp without time zone", "timestamp with time zone", "interval", "jsonb", "json", "uuid", "bytea", "inet", "text[]", "integer[]"],
+  mysql: ["int", "bigint", "smallint", "tinyint", "mediumint", "decimal", "float", "double", "bit", "varchar", "char", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "json", "enum", "blob", "longblob", "binary", "varbinary"],
   sqlite: ["TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"],
 };
 
@@ -36,7 +41,7 @@ function fromStructure(st: TableStructure, order?: string[]): Draft[] {
   if (order?.length) cols.sort((a, b) => (order.indexOf(a.name) + 1 || 1e9) - (order.indexOf(b.name) + 1 || 1e9));
   return cols.map((c) => {
     const original = { name: c.name, dataType: c.dataType, nullable: c.nullable, defaultValue: c.defaultValue };
-    return { key: c.name, original, ...original, defaultValue: c.defaultValue ?? "", dropped: false, pk: c.primaryKey };
+    return { key: c.name, original, ...original, defaultValue: c.defaultValue ?? "", dropped: false, pk: c.primaryKey, keyKind: c.key, extra: c.extra };
   });
 }
 
@@ -50,6 +55,7 @@ export function StructureEditor({
   onViewOrder,
   onApplied,
   onQuery,
+  onRefresh,
 }: {
   session: Session;
   schema: string;
@@ -60,11 +66,13 @@ export function StructureEditor({
   onViewOrder(names: string[]): void;
   onApplied(): void;
   onQuery(sql: string): void;
+  onRefresh(): void;
 }) {
   const toast = useApp((s) => s.toast);
   const driver = session.connection.driver;
   const prod = session.connection.tag === "production";
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [plan, setPlan] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +95,8 @@ export function StructureEditor({
   );
   const liveNames = drafts.filter((d) => !d.dropped).map((d) => d.name.trim());
   const baseline = useMemo(() => (structure ? fromStructure(structure, viewOrder).map((d) => d.key) : []), [structure, viewOrder]);
-  const orderChanged = drafts.filter((d) => d.original && !d.dropped).map((d) => d.key).join() !==
+  const orderChanged =
+    drafts.filter((d) => d.original && !d.dropped).map((d) => d.key).join() !==
     baseline.filter((k) => drafts.some((d) => d.key === k && !d.dropped)).join();
   const dirty = changes.length > 0 || orderChanged;
 
@@ -108,7 +117,48 @@ export function StructureEditor({
       a.splice(j, 0, m);
       return a;
     });
+  const blank = (over: Partial<Draft> = {}): Draft => ({
+    key: `new-${crypto.randomUUID()}`,
+    original: null,
+    name: "",
+    dataType: driver === "mysql" ? "varchar(255)" : TYPES[driver][0],
+    nullable: true,
+    defaultValue: "",
+    dropped: false,
+    pk: false,
+    keyKind: "",
+    extra: "",
+    ...over,
+  });
+  const addColumn = () => {
+    const d = blank();
+    setDrafts((ds) => {
+      const i = selected ? ds.findIndex((x) => x.key === selected) : -1;
+      const a = [...ds];
+      a.splice(i >= 0 ? i + 1 : a.length, 0, d);
+      return a;
+    });
+    setSelected(d.key);
+  };
+  const removeSelected = () => {
+    const d = drafts.find((x) => x.key === selected);
+    if (!d) return;
+    if (d.original) patch(d.key, { dropped: !d.dropped });
+    else setDrafts((ds) => ds.filter((x) => x.key !== d.key));
+  };
+  const duplicateSelected = () => {
+    const d = drafts.find((x) => x.key === selected);
+    if (!d) return;
+    const copy = blank({ name: `${d.name}_copy`, dataType: d.dataType, nullable: true, defaultValue: d.defaultValue });
+    setDrafts((ds) => {
+      const a = [...ds];
+      a.splice(a.findIndex((x) => x.key === d.key) + 1, 0, copy);
+      return a;
+    });
+    setSelected(copy.key);
+  };
 
+  const req = (): AlterRequest => ({ schema, table, changes, order: driver === "mysql" && orderChanged ? liveNames : [] });
   const review = async () => {
     setError(null);
     if (!changes.length && orderChanged && driver !== "mysql") {
@@ -118,19 +168,17 @@ export function StructureEditor({
     }
     setBusy(true);
     try {
-      const stmts = await api.planAlter(session.id, { schema, table, changes, order: driver === "mysql" && orderChanged ? liveNames : [] });
-      setPlan(stmts);
+      setPlan(await api.planAlter(session.id, req()));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   };
-
   const apply = async () => {
     setBusy(true);
     try {
-      const ran = await api.applyAlter(session.id, { schema, table, changes, order: driver === "mysql" && orderChanged ? liveNames : [] });
+      const ran = await api.applyAlter(session.id, req());
       if (orderChanged) onViewOrder(liveNames);
       setPlan(null);
       toast(`Applied ${ran.length} change${ran.length === 1 ? "" : "s"} to ${table}`, "success");
@@ -144,179 +192,172 @@ export function StructureEditor({
   };
 
   const drops = changes.filter((c) => !c.column).length;
+  const sel = drafts.find((d) => d.key === selected);
+  const mysql = driver === "mysql";
 
   return (
     <div className="structure">
-      <div className="st-head">
-        <h3>Columns · {drafts.filter((d) => !d.dropped).length}</h3>
-        <div className="spacer" />
-        {editable && (
-          <button
-            className="btn ghost"
-            onClick={() => {
-              const key = `new-${crypto.randomUUID()}`;
-              setDrafts((ds) => [...ds, { key, original: null, name: "", dataType: TYPES[driver][0], nullable: true, defaultValue: "", dropped: false, pk: false }]);
-            }}
-          >
-            <Plus /> Add column
-          </button>
-        )}
-      </div>
-      {driver !== "mysql" && editable && (
-        <p className="hint" style={{ marginTop: -4 }}>
-          <Info /> Drag rows to reorder. {driver === "postgres" ? "PostgreSQL" : "SQLite"} can't reorder stored columns, so
-          this sets the order Tabla shows in the grid. Header drag in the grid does the same.
-        </p>
-      )}
-      <datalist id={`types-${driver}`}>
-        {TYPES[driver].map((t) => (
-          <option key={t} value={t} />
-        ))}
-      </datalist>
-      <div className="st-table" role="table">
-        <div className="st-row st-header" role="row">
-          <span />
-          <span>Name</span>
-          <span>Type</span>
-          <span>Nullable</span>
-          <span>Default</span>
-          <span />
-        </div>
-        {drafts.map((d) => {
-          const changed = d.original ? !same(d.original, toDef(d)) : true;
-          return (
-            <div
-              key={d.key}
-              role="row"
-              className={`st-row ${d.dropped ? "dropped" : ""} ${!d.original ? "added" : changed ? "changed" : ""} ${dragKey === d.key ? "dragging" : ""}`}
-              onDragOver={(e) => {
-                if (!dragKey || dragKey === d.key) return;
-                e.preventDefault();
-                move(dragKey, d.key);
-              }}
-            >
-              <span
-                className="grip"
-                draggable={editable}
-                onDragStart={(e) => {
-                  setDragKey(d.key);
-                  e.dataTransfer.effectAllowed = "move";
-                  e.dataTransfer.setData("text/plain", d.key);
+      <section className="sg-panel">
+        <div className={`sg ${mysql ? "mysql" : ""}`} role="table">
+          <div className="sg-row sg-head" role="row">
+            <span />
+            <span>Field</span>
+            <span>Type</span>
+            <span>Length</span>
+            {mysql && <span className="c">Unsigned</span>}
+            <span className="c">Allow Null</span>
+            <span>Key</span>
+            <span>Default</span>
+            <span>Extra</span>
+          </div>
+          {drafts.map((d) => {
+            const changed = d.original ? !same(d.original, toDef(d)) : true;
+            const t = splitType(d.dataType);
+            const setType = (p: Partial<typeof t>) => patch(d.key, { dataType: joinType({ ...t, ...p }) });
+            const off = !editable || d.dropped;
+            return (
+              <div
+                key={d.key}
+                role="row"
+                className={`sg-row ${selected === d.key ? "sel" : ""} ${d.dropped ? "dropped" : !d.original ? "added" : changed ? "changed" : ""} ${dragKey === d.key ? "dragging" : ""}`}
+                onMouseDown={() => setSelected(d.key)}
+                onDragOver={(e) => {
+                  if (!dragKey || dragKey === d.key) return;
+                  e.preventDefault();
+                  move(dragKey, d.key);
                 }}
-                onDragEnd={() => setDragKey(null)}
-                title="Drag to reorder"
               >
-                {d.pk ? <KeyRound className="pk-ico" /> : <GripVertical />}
-              </span>
-              <input
-                className="input sm mono"
-                value={d.name}
-                placeholder="column_name"
-                disabled={!editable || d.dropped}
-                onChange={(e) => patch(d.key, { name: e.target.value })}
-                spellCheck={false}
-                autoFocus={!d.original && !d.name}
-              />
-              <input
-                className="input sm mono"
-                list={`types-${driver}`}
-                value={d.dataType}
-                disabled={!editable || d.dropped}
-                onChange={(e) => patch(d.key, { dataType: e.target.value })}
-                spellCheck={false}
-              />
-              <label className="st-check">
-                <input type="checkbox" checked={d.nullable} disabled={!editable || d.dropped || d.pk} onChange={(e) => patch(d.key, { nullable: e.target.checked })} />
-                {d.nullable ? "null" : "not null"}
-              </label>
-              <input
-                className="input sm mono"
-                value={d.defaultValue}
-                placeholder={editable ? "e.g. now(), 'draft', 0" : ""}
-                disabled={!editable || d.dropped}
-                onChange={(e) => patch(d.key, { defaultValue: e.target.value })}
-                spellCheck={false}
-              />
-              <span className="st-acts">
-                {editable &&
-                  (d.dropped ? (
-                    <button className="icon-btn" title="Keep column" onClick={() => patch(d.key, { dropped: false })}>
-                      <RotateCcw />
-                    </button>
-                  ) : d.original && changed ? (
-                    <button className="icon-btn" title="Undo changes" onClick={() => patch(d.key, { ...d.original!, defaultValue: d.original!.defaultValue ?? "" })}>
-                      <Undo2 />
-                    </button>
-                  ) : null)}
-                {editable && !d.dropped && (
-                  <button
-                    className="icon-btn danger"
-                    title={d.original ? "Drop column" : "Remove"}
-                    onClick={() => (d.original ? patch(d.key, { dropped: true }) : setDrafts((ds) => ds.filter((x) => x.key !== d.key)))}
-                  >
-                    <Trash2 />
-                  </button>
+                <span
+                  className="grip"
+                  draggable={editable}
+                  onDragStart={(e) => {
+                    setDragKey(d.key);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", d.key);
+                  }}
+                  onDragEnd={() => setDragKey(null)}
+                  title={editable ? "Drag to reorder" : undefined}
+                >
+                  {d.pk ? <KeyRound className="pk-ico" /> : <GripVertical />}
+                </span>
+                <input
+                  className="sg-in mono strong"
+                  value={d.name}
+                  placeholder="column_name"
+                  disabled={off}
+                  onChange={(e) => patch(d.key, { name: e.target.value })}
+                  spellCheck={false}
+                  autoFocus={!d.original && !d.name}
+                />
+                <Combobox className="sg-combo" value={t.base} suggestions={TYPES[driver]} disabled={off} onChange={(v) => setType({ base: v })} />
+                <input className="sg-in mono" value={t.len} disabled={off} onChange={(e) => setType({ len: e.target.value })} spellCheck={false} />
+                {mysql && (
+                  <span className="c">
+                    <Checkbox checked={t.unsigned} disabled={off} onChange={(v) => setType({ unsigned: v })} />
+                  </span>
                 )}
+                <span className="c">
+                  <Checkbox checked={d.nullable} disabled={off || d.pk} onChange={(v) => patch(d.key, { nullable: v })} />
+                </span>
+                <span className={`sg-key ${d.keyKind.toLowerCase()}`}>{d.keyKind}</span>
+                <input
+                  className="sg-in mono"
+                  value={d.defaultValue}
+                  placeholder={d.nullable ? "NULL" : ""}
+                  disabled={off}
+                  onChange={(e) => patch(d.key, { defaultValue: e.target.value })}
+                  spellCheck={false}
+                />
+                <span className="sg-extra" title={d.extra}>
+                  {d.dropped ? "will be dropped" : !d.original ? "new" : d.extra}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="sg-bar">
+          <button className="icon-btn" title="Add column" onClick={addColumn} disabled={!editable}>
+            <Plus />
+          </button>
+          <button className="icon-btn" title={sel?.dropped ? "Keep column" : "Drop selected column"} onClick={removeSelected} disabled={!editable || !sel}>
+            {sel?.dropped ? <RotateCcw /> : <Minus />}
+          </button>
+          <button className="icon-btn" title="Duplicate selected column" onClick={duplicateSelected} disabled={!editable || !sel}>
+            <Copy />
+          </button>
+          <button className="icon-btn" title="Refresh" onClick={onRefresh}>
+            <RefreshCw />
+          </button>
+          <span className="sg-count">
+            {drafts.filter((d) => !d.dropped).length} columns
+            {!mysql && editable && (
+              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
+                {" "}
+                · <Info size={11} style={{ verticalAlign: -1 }} /> drag sets view order
               </span>
-            </div>
-          );
-        })}
-      </div>
+            )}
+          </span>
+          <div className="spacer" />
+          {dirty && editable && (
+            <>
+              <span className="sg-pending">
+                <span className="dot" />
+                {changes.length > 0 && `${changes.length} change${changes.length > 1 ? "s" : ""}`}
+                {changes.length > 0 && orderChanged && " · "}
+                {orderChanged && "new order"}
+              </span>
+              <button className="btn ghost" onClick={() => structure && setDrafts(fromStructure(structure, viewOrder))}>
+                Discard
+              </button>
+              <button className="btn primary" onClick={review} disabled={busy}>
+                {busy ? <span className="spinner" style={{ borderTopColor: "#fff" }} /> : <Wand2 />}
+                {changes.length || mysql ? "Review SQL" : "Save order"}
+              </button>
+            </>
+          )}
+        </div>
+      </section>
 
       {error && (
-        <div className="q-error" style={{ margin: "0 0 20px" }}>
+        <div className="q-error" style={{ margin: "12px 0 0" }}>
           <AlertTriangle />
           <div>{error}</div>
         </div>
       )}
 
-      {dirty && editable && (
-        <div className="st-bar">
-          <span className="dot" />
-          <span>
-            {changes.length > 0 && `${changes.length} column change${changes.length > 1 ? "s" : ""}`}
-            {changes.length > 0 && orderChanged && " · "}
-            {orderChanged && "new order"}
-          </span>
-          <div className="spacer" />
-          <button className="btn ghost" onClick={() => structure && setDrafts(fromStructure(structure, viewOrder))}>
-            Discard
-          </button>
-          <button className="btn primary" onClick={review} disabled={busy}>
-            {busy ? <span className="spinner" style={{ borderTopColor: "#fff" }} /> : <Wand2 />}
-            {changes.length || driver === "mysql" ? "Review SQL" : "Save order"}
-          </button>
+      <div className="sg-section">Indexes</div>
+      <section className="sg-panel">
+        <div className="sg ix" role="table">
+          <div className="sg-row sg-head" role="row">
+            <span>Name</span>
+            <span>Columns</span>
+            <span className="c">Unique</span>
+            <span className="c">Primary</span>
+            <span>Method</span>
+            <span />
+          </div>
+          {structure.indexes.length === 0 && <div className="sg-empty">No indexes</div>}
+          {structure.indexes.map((i) => (
+            <div key={i.name} className="sg-row" role="row" title={i.definition}>
+              <span className="mono strong ellipsis">{i.name}</span>
+              <span className="mono ellipsis">{i.columns}</span>
+              <span className="c">{i.unique && <Check className="ok-ico" />}</span>
+              <span className="c">{i.primary && <KeyRound className="pk-ico" />}</span>
+              <span className="mono dim">{i.method}</span>
+              <span className="c">
+                <button className="icon-btn" style={{ width: 24, height: 24 }} title="Open definition in query editor" onClick={() => onQuery(i.definition)}>
+                  <Code2 size={13} />
+                </button>
+              </span>
+            </div>
+          ))}
         </div>
-      )}
-
-      <h3 style={{ marginTop: 28 }}>Indexes · {structure.indexes.length}</h3>
-      {structure.indexes.length ? (
-        <table className="s-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Definition</th>
-            </tr>
-          </thead>
-          <tbody>
-            {structure.indexes.map((i) => (
-              <tr key={i.name}>
-                <td className="mono" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                  {i.name}
-                </td>
-                <td className="mono muted">
-                  {i.definition}
-                  <button className="icon-btn" style={{ width: 22, height: 22, marginLeft: 6, verticalAlign: "middle" }} title="Open in query editor" onClick={() => onQuery(i.definition)}>
-                    <Code2 size={12} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p className="dim">No indexes.</p>
-      )}
+        <div className="sg-bar">
+          <span className="sg-count">
+            {structure.indexes.length} index{structure.indexes.length === 1 ? "" : "es"}
+          </span>
+        </div>
+      </section>
 
       {plan && (
         <Modal onClose={() => setPlan(null)} className="modal wide">
@@ -326,7 +367,7 @@ export function StructureEditor({
               <h2>{prod ? "Change structure on production?" : "Review structure changes"}</h2>
               <p>
                 {plan.length} statement{plan.length === 1 ? "" : "s"} will run on <b>{table}</b>
-                {driver === "mysql" ? ". MySQL applies them one by one and can't roll back structure changes." : " in a single transaction."}
+                {mysql ? ". MySQL applies them one by one and can't roll back structure changes." : " in a single transaction."}
               </p>
             </div>
           </div>

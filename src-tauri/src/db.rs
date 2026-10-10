@@ -30,10 +30,28 @@ pub enum Pool {
     Lite(SqlitePool),
 }
 
+/// One statement Tabla sent to the server (Console view). Memory only.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct LogEntry {
+    pub id: u64,
+    /// Unix time in milliseconds.
+    pub at: u128,
+    pub sql: String,
+    pub ms: u128,
+    pub ok: bool,
+    /// Rows returned/affected, or the error message.
+    pub info: String,
+}
+
+const LOG_CAP: usize = 500;
+const LOG_SQL_MAX: usize = 4000;
+
 pub struct Session {
     pub pool: Pool,
     pub driver: Driver,
     pub read_only: bool,
+    log: std::sync::Mutex<std::collections::VecDeque<LogEntry>>,
     /// Kept alive for the lifetime of the pool when connecting through SSH.
     _tunnel: Option<crate::ssh::Tunnel>,
 }
@@ -71,6 +89,10 @@ pub struct ColumnInfo {
     pub nullable: bool,
     pub default_value: Option<String>,
     pub primary_key: bool,
+    /// "PRI" | "UNI" | "MUL" | "" (Sequel Ace style key column).
+    pub key: String,
+    /// e.g. "auto increment", "identity", "generated", "on update CURRENT_TIMESTAMP".
+    pub extra: String,
 }
 
 #[derive(Serialize)]
@@ -78,6 +100,39 @@ pub struct ColumnInfo {
 pub struct IndexInfo {
     pub name: String,
     pub definition: String,
+    pub unique: bool,
+    pub primary: bool,
+    pub method: String,
+    pub columns: String,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TableDetails {
+    pub rows_estimate: Option<i64>,
+    /// Table + indexes, or the whole database file for SQLite.
+    pub total_bytes: Option<i64>,
+    pub engine: Option<String>,
+    pub collation: Option<String>,
+    pub comment: Option<String>,
+    pub created: Option<String>,
+    pub updated: Option<String>,
+    pub ddl: Option<String>,
+    /// Engine-specific figures shown in the Info view, e.g. ("Index size", "3670016", "bytes").
+    pub stats: Vec<Stat>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stat {
+    pub label: String,
+    pub value: String,
+    /// "bytes" | "number" | "text"
+    pub kind: String,
+}
+
+fn stat(label: &str, value: Option<String>, kind: &str) -> Option<Stat> {
+    value.filter(|v| !v.is_empty()).map(|value| Stat { label: label.into(), value, kind: kind.into() })
 }
 
 #[derive(Serialize)]
@@ -239,7 +294,7 @@ impl Session {
                 Pool::Lite(SqlitePoolOptions::new().max_connections(2).connect_with(o).await?)
             }
         };
-        Ok(Session { pool, driver: cfg.driver, read_only: cfg.read_only, _tunnel: tunnel })
+        Ok(Session { pool, driver: cfg.driver, read_only: cfg.read_only, log: Default::default(), _tunnel: tunnel })
     }
 
     pub async fn close(&self) {
@@ -250,8 +305,57 @@ impl Session {
         }
     }
 
+    pub fn record(&self, sql: &str, started: std::time::Instant, outcome: Result<String, String>) {
+        let mut log = self.log.lock().unwrap();
+        let id = log.back().map(|e| e.id + 1).unwrap_or(1);
+        let mut text = sql.trim().to_string();
+        if text.len() > LOG_SQL_MAX {
+            let cut = (0..=LOG_SQL_MAX).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
+            text.truncate(cut);
+            text.push('…');
+        }
+        let (ok, info) = match outcome {
+            Ok(i) => (true, i),
+            Err(e) => (false, e),
+        };
+        log.push_back(LogEntry {
+            id,
+            at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
+            sql: text,
+            ms: started.elapsed().as_millis(),
+            ok,
+            info,
+        });
+        while log.len() > LOG_CAP {
+            log.pop_front();
+        }
+    }
+
+    pub fn log_since(&self, after: u64) -> Vec<LogEntry> {
+        self.log.lock().unwrap().iter().filter(|e| e.id > after).cloned().collect()
+    }
+
+    pub fn clear_log(&self) {
+        self.log.lock().unwrap().clear();
+    }
+
     /// Runs a (possibly multi-statement) script, returning one result set per statement.
     pub async fn run_script(&self, sql: &str, max_rows: usize) -> AppResult<Vec<ResultSet>> {
+        let started = std::time::Instant::now();
+        let res = self.run_script_inner(sql, max_rows).await;
+        let outcome = match &res {
+            Ok(sets) => Ok(sets
+                .iter()
+                .map(|s| if s.columns.is_empty() { format!("{} affected", s.rows_affected) } else { format!("{} rows", s.rows.len()) })
+                .collect::<Vec<_>>()
+                .join(", ")),
+            Err(e) => Err(e.to_string()),
+        };
+        self.record(sql, started, outcome);
+        res
+    }
+
+    async fn run_script_inner(&self, sql: &str, max_rows: usize) -> AppResult<Vec<ResultSet>> {
         let raw = || sqlx::raw_sql(AssertSqlSafe(sql.to_owned()));
         let mut sets = match &self.pool {
             Pool::Pg(p) => collect(raw().fetch_many(p), max_rows, |q| q.rows_affected(), pg_cell).await?,
@@ -370,7 +474,13 @@ impl Session {
                 let sql = format!(
                     "SELECT a.attname, format_type(a.atttypid, a.atttypmod), NOT a.attnotnull, \
                      pg_get_expr(ad.adbin, ad.adrelid), \
-                     EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)) \
+                     EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)), \
+                     CASE WHEN EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)) THEN 'PRI' \
+                          WHEN EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisunique AND i.indnatts = 1 AND i.indkey[0] = a.attnum) THEN 'UNI' \
+                          WHEN EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND a.attnum = ANY(i.indkey)) THEN 'MUL' ELSE '' END, \
+                     CASE WHEN (to_jsonb(a)->>'attidentity') IN ('a','d') THEN 'identity' \
+                          WHEN (to_jsonb(a)->>'attgenerated') = 's' THEN 'generated' \
+                          WHEN pg_get_expr(ad.adbin, ad.adrelid) LIKE 'nextval(%' THEN 'auto increment' ELSE '' END \
                      FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
                      JOIN pg_namespace n ON n.oid = c.relnamespace \
                      LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
@@ -381,7 +491,12 @@ impl Session {
             }
             Driver::Mysql => {
                 let sql = format!(
-                    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY \
+                    "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, \
+                     CASE WHEN COLUMN_DEFAULT IS NULL THEN NULL \
+                          WHEN EXTRA LIKE '%DEFAULT_GENERATED%' OR DATA_TYPE IN \
+                            ('tinyint','smallint','mediumint','int','bigint','decimal','float','double','bit','year') \
+                          THEN COLUMN_DEFAULT ELSE QUOTE(COLUMN_DEFAULT) END, \
+                     COLUMN_KEY, COLUMN_KEY, TRIM(REPLACE(LOWER(EXTRA), 'default_generated', '')) \
                      FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = {s} AND TABLE_NAME = {t} \
                      ORDER BY ORDINAL_POSITION"
                 );
@@ -389,7 +504,9 @@ impl Session {
             }
             Driver::Sqlite => {
                 let sql = format!(
-                    "SELECT name, type, \"notnull\" = 0, dflt_value, pk > 0 FROM pragma_table_info({t}, {s})"
+                    "SELECT name, type, \"notnull\" = 0, dflt_value, pk > 0, CASE WHEN pk > 0 THEN 'PRI' ELSE '' END, \
+                     CASE WHEN pk > 0 AND upper(type) = 'INTEGER' THEN 'auto increment' ELSE '' END \
+                     FROM pragma_table_info({t}, {s})"
                 );
                 self.text_rows(&sql).await?.into_iter().map(|r| column_from(r, |v| v == "1", |v| v == "1")).collect()
             }
@@ -397,31 +514,181 @@ impl Session {
 
         let index_sql = match d {
             Driver::Postgres => format!(
-                "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = {s} AND tablename = {t} ORDER BY indexname"
+                "SELECT ci.relname, pg_get_indexdef(ix.indexrelid), ix.indisunique, ix.indisprimary, am.amname, \
+                 (SELECT string_agg(pg_get_indexdef(ix.indexrelid, k, true), ', ' ORDER BY k) FROM generate_series(1, ix.indnatts) k) \
+                 FROM pg_index ix JOIN pg_class ci ON ci.oid = ix.indexrelid JOIN pg_class ct ON ct.oid = ix.indrelid \
+                 JOIN pg_namespace n ON n.oid = ct.relnamespace JOIN pg_am am ON am.oid = ci.relam \
+                 WHERE n.nspname = {s} AND ct.relname = {t} ORDER BY ix.indisprimary DESC, ci.relname"
             ),
             Driver::Mysql => format!(
                 "SELECT INDEX_NAME, CONCAT(IF(NON_UNIQUE = 0, 'UNIQUE ', ''), INDEX_TYPE, ' (', \
-                 GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', '), ')') \
+                 GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', '), ')'), IF(NON_UNIQUE = 0, '1', '0'), \
+                 IF(INDEX_NAME = 'PRIMARY', '1', '0'), LOWER(INDEX_TYPE), GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ') \
                  FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = {s} AND TABLE_NAME = {t} \
-                 GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE ORDER BY INDEX_NAME"
+                 GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME"
             ),
             Driver::Sqlite => format!(
-                "SELECT name, COALESCE(sql, '(automatic index)') FROM {}.sqlite_master \
-                 WHERE type = 'index' AND tbl_name = {t} ORDER BY name",
+                "SELECT il.name, COALESCE(m.sql, '(automatic index)'), il.\"unique\", il.origin = 'pk', 'btree', \
+                 (SELECT group_concat(ii.name, ', ') FROM pragma_index_info(il.name, {s}) ii) \
+                 FROM pragma_index_list({t}, {s}) il LEFT JOIN {}.sqlite_master m ON m.name = il.name ORDER BY il.name",
                 d.quote_ident(schema)
             ),
         };
+        let truthy = |v: Option<String>| matches!(v.as_deref(), Some("t" | "1" | "true"));
         let indexes = self
             .text_rows(&index_sql)
             .await?
             .into_iter()
             .filter_map(|r| {
                 let mut it = r.into_iter();
-                Some(IndexInfo { name: it.next().flatten()?, definition: it.next().flatten().unwrap_or_default() })
+                Some(IndexInfo {
+                    name: it.next().flatten()?,
+                    definition: it.next().flatten().unwrap_or_default(),
+                    unique: truthy(it.next().flatten()),
+                    primary: truthy(it.next().flatten()),
+                    method: it.next().flatten().unwrap_or_default(),
+                    columns: it.next().flatten().unwrap_or_default(),
+                })
             })
             .collect();
 
         Ok(TableStructure { columns, indexes })
+    }
+
+    pub async fn table_details(&self, schema: &str, table: &str) -> AppResult<TableDetails> {
+        let d = self.driver;
+        let (s, t) = (d.quote_literal(schema), d.quote_literal(table));
+        let first = |rows: Vec<Vec<Option<String>>>| rows.into_iter().next().unwrap_or_default();
+        let num = |v: Option<String>| v.and_then(|x| x.parse::<f64>().ok()).map(|f| f as i64);
+        let mut out = TableDetails::default();
+        match d {
+            Driver::Postgres => {
+                let r = first(
+                    self.text_rows(&format!(
+                        "SELECT c.reltuples::bigint, pg_total_relation_size(c.oid), obj_description(c.oid, 'pg_class'), \
+                         (SELECT datcollate FROM pg_database WHERE datname = current_database()), c.relkind \
+                         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {s} AND c.relname = {t}"
+                    ))
+                    .await?,
+                );
+                let mut it = r.into_iter();
+                out.rows_estimate = num(it.next().flatten()).filter(|n| *n >= 0);
+                out.total_bytes = num(it.next().flatten());
+                out.comment = it.next().flatten();
+                out.collation = it.next().flatten();
+                out.engine = Some("PostgreSQL heap".into());
+                let st = first(
+                    self.text_rows(&format!(
+                        "SELECT pg_table_size(c.oid), pg_indexes_size(c.oid), s.n_live_tup, s.n_dead_tup, \
+                         s.seq_scan, s.idx_scan, s.last_vacuum, s.last_autovacuum, s.last_analyze, s.last_autoanalyze \
+                         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                         LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid WHERE n.nspname = {s} AND c.relname = {t}"
+                    ))
+                    .await?,
+                );
+                let mut sv = st.into_iter();
+                let mut v = || sv.next().flatten();
+                let (tbl, idx, live, dead, seq, iscan) = (v(), v(), v(), v(), v(), v());
+                let (vac, avac, an, aan) = (v(), v(), v(), v());
+                out.stats = [
+                    stat("Data size", tbl, "bytes"),
+                    stat("Index size", idx, "bytes"),
+                    stat("Live rows", live, "number"),
+                    stat("Dead rows", dead, "number"),
+                    stat("Sequential scans", seq, "number"),
+                    stat("Index scans", iscan, "number"),
+                    stat("Last vacuum", vac.or(avac), "text"),
+                    stat("Last analyze", an.or(aan), "text"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let kind = it.next().flatten().unwrap_or_default();
+                out.ddl = Some(if kind == "v" || kind == "m" {
+                    let def = first(self.text_rows(&format!("SELECT pg_get_viewdef({}::regclass, true)", d.quote_literal(&d.qualified(schema, table)))).await?);
+                    format!(
+                        "CREATE {}VIEW {} AS\n{}",
+                        if kind == "m" { "MATERIALIZED " } else { "" },
+                        d.qualified(schema, table),
+                        def.into_iter().next().flatten().unwrap_or_default()
+                    )
+                } else {
+                    self.pg_ddl(schema, table).await?
+                });
+            }
+            Driver::Mysql => {
+                let r = first(
+                    self.text_rows(&format!(
+                        "SELECT TABLE_ROWS, DATA_LENGTH + INDEX_LENGTH, ENGINE, TABLE_COLLATION, TABLE_COMMENT, CREATE_TIME, UPDATE_TIME, \
+                         ROW_FORMAT, AVG_ROW_LENGTH, AUTO_INCREMENT, DATA_LENGTH, INDEX_LENGTH, DATA_FREE, MAX_DATA_LENGTH \
+                         FROM information_schema.TABLES WHERE TABLE_SCHEMA = {s} AND TABLE_NAME = {t}"
+                    ))
+                    .await?,
+                );
+                let mut it = r.into_iter();
+                out.rows_estimate = num(it.next().flatten());
+                out.total_bytes = num(it.next().flatten());
+                out.engine = it.next().flatten();
+                out.collation = it.next().flatten();
+                out.comment = it.next().flatten().filter(|c| !c.is_empty());
+                out.created = it.next().flatten();
+                out.updated = it.next().flatten();
+                out.stats = [
+                    stat("Row format", it.next().flatten(), "text"),
+                    stat("Avg. row length", it.next().flatten(), "bytes"),
+                    stat("Auto increment", it.next().flatten(), "number"),
+                    stat("Data size", it.next().flatten(), "bytes"),
+                    stat("Index size", it.next().flatten(), "bytes"),
+                    stat("Free data size", it.next().flatten(), "bytes"),
+                    stat("Max data size", it.next().flatten().filter(|v| v != "0"), "bytes"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let ddl = first(self.text_rows(&format!("SHOW CREATE TABLE {}", d.qualified(schema, table))).await?);
+                out.ddl = ddl.into_iter().nth(1).flatten();
+            }
+            Driver::Sqlite => {
+                let q = d.quote_ident(schema);
+                let ddl = first(self.text_rows(&format!("SELECT sql FROM {q}.sqlite_master WHERE name = {t}")).await?);
+                out.ddl = ddl.into_iter().next().flatten();
+                let cnt = first(self.text_rows(&format!("SELECT count(*) FROM {}", d.qualified(schema, table))).await?);
+                out.rows_estimate = num(cnt.into_iter().next().flatten());
+                let size = first(self.text_rows(&format!("SELECT page_count * page_size FROM pragma_page_count({s}), pragma_page_size({s})")).await?);
+                out.total_bytes = num(size.into_iter().next().flatten());
+                out.engine = Some("SQLite".into());
+            }
+        }
+        Ok(out)
+    }
+
+    /// Reconstructs a readable CREATE TABLE for Postgres (columns, primary key, indexes).
+    async fn pg_ddl(&self, schema: &str, table: &str) -> AppResult<String> {
+        let d = self.driver;
+        let st = self.table_structure(schema, table).await?;
+        let mut lines: Vec<String> = st
+            .columns
+            .iter()
+            .map(|c| {
+                let mut l = format!("  {} {}", d.quote_ident(&c.name), c.data_type);
+                if !c.nullable {
+                    l.push_str(" NOT NULL");
+                }
+                if let Some(def) = &c.default_value {
+                    l.push_str(&format!(" DEFAULT {def}"));
+                }
+                l
+            })
+            .collect();
+        let pk: Vec<String> = st.columns.iter().filter(|c| c.primary_key).map(|c| d.quote_ident(&c.name)).collect();
+        if !pk.is_empty() {
+            lines.push(format!("  PRIMARY KEY ({})", pk.join(", ")));
+        }
+        let mut ddl = format!("CREATE TABLE {} (\n{}\n);", d.qualified(schema, table), lines.join(",\n"));
+        for i in st.indexes.iter().filter(|i| !i.primary) {
+            ddl.push_str(&format!("\n{};", i.definition));
+        }
+        Ok(ddl)
     }
 
     pub async fn fetch_rows(&self, a: &FetchArgs) -> AppResult<TablePage> {
@@ -594,11 +861,15 @@ impl Session {
                 let mut tx = $pool.begin().await?;
                 let mut total = 0u64;
                 for (sql, binds, single) in stmts {
+                    let sql_text = sql.clone();
                     let mut q = sqlx::query(AssertSqlSafe(sql));
                     for b in binds {
                         q = q.bind(b);
                     }
-                    let affected = q.execute(&mut *tx).await?.rows_affected();
+                    let started = std::time::Instant::now();
+                    let res = q.execute(&mut *tx).await;
+                    self.record(&sql_text, started, res.as_ref().map(|r| format!("{} affected", r.rows_affected())).map_err(crate::error::db_message));
+                    let affected = res?.rows_affected();
                     if single && affected != 1 {
                         // Dropping `tx` rolls everything back.
                         return Err(AppError::msg(format!(
@@ -661,6 +932,8 @@ fn column_from(r: Vec<Option<String>>, nullable: impl Fn(&str) -> bool, pk: impl
         nullable: it.next().flatten().is_some_and(|v| nullable(&v)),
         default_value: it.next().flatten(),
         primary_key: it.next().flatten().is_some_and(|v| pk(&v)),
+        key: it.next().flatten().unwrap_or_default(),
+        extra: it.next().flatten().unwrap_or_default(),
     }
 }
 
@@ -863,6 +1136,16 @@ mod tests {
         let empty = s.run_script("SELECT * FROM empty_t", 100).await.unwrap();
         assert_eq!(empty[0].columns.len(), 2);
 
+        let st = s.table_structure("public", "users").await.unwrap();
+        let id = st.columns.iter().find(|c| c.name == "id").unwrap();
+        assert_eq!((id.key.as_str(), id.extra.as_str()), ("PRI", "auto increment"));
+        assert_eq!(st.columns.iter().find(|c| c.name == "email").unwrap().key, "UNI");
+        let pk = st.indexes.iter().find(|i| i.primary).unwrap();
+        assert_eq!((pk.columns.as_str(), pk.method.as_str(), pk.unique), ("id", "btree", true));
+        let info = s.table_details("public", "users").await.unwrap();
+        assert!(info.total_bytes.unwrap() > 0);
+        assert!(info.ddl.unwrap().starts_with("CREATE TABLE \"public\".\"users\""));
+
         // Second line of defense for AI queries: even unvalidated writes fail.
         let err = s.run_readonly("DELETE FROM users WHERE id = -1", 10).await.unwrap_err().to_string();
         assert!(err.contains("read-only"), "{err}");
@@ -878,6 +1161,14 @@ mod tests {
         assert_eq!(sets[0].rows.len(), 3);
         assert!(sets[0].rows[1][1].is_none());
 
+        let st = s.table_structure("tabla_test", "products").await.unwrap();
+        let id = st.columns.iter().find(|c| c.name == "id").unwrap();
+        assert_eq!((id.key.as_str(), id.extra.as_str()), ("PRI", "auto_increment"));
+        assert_eq!(st.columns.iter().find(|c| c.name == "sku").unwrap().key, "UNI");
+        let info = s.table_details("tabla_test", "products").await.unwrap();
+        assert_eq!(info.engine.as_deref(), Some("InnoDB"));
+        assert!(info.ddl.unwrap().contains("CREATE TABLE `products`"));
+
         let err = s.run_readonly("UPDATE products SET stock = stock WHERE id = -1", 10).await.unwrap_err().to_string();
         assert!(err.to_lowercase().contains("read only"), "{err}");
     }
@@ -889,6 +1180,10 @@ mod tests {
         roundtrip(&s, "main", "notes", "title").await;
         let sets = s.run_script("SELECT data, score FROM notes ORDER BY id", 100).await.unwrap();
         assert_eq!(sets[0].rows[0][0].as_deref(), Some("0x0102"));
+        let st = s.table_structure("main", "notes").await.unwrap();
+        assert_eq!(st.columns[0].key, "PRI");
+        let info = s.table_details("main", "notes").await.unwrap();
+        assert!(info.ddl.unwrap().starts_with("CREATE TABLE notes"));
     }
 
     #[tokio::test]

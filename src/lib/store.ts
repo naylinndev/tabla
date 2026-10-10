@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { api, errorMessage, type ConnectionConfig, type TableInfo } from "./api";
 
-export type TableTab = { id: string; kind: "table"; schema: string; table: string; view: "data" | "structure" };
+export type TableTab = { id: string; kind: "table"; schema: string; table: string; view: "data" | "structure" | "info" };
 export type QueryTab = { id: string; kind: "query"; title: string; sql: string };
 export type Tab = TableTab | QueryTab;
 
@@ -47,7 +47,7 @@ interface State {
   setSchema(sessionId: string, schema: string): Promise<void>;
   refreshTables(sessionId: string): Promise<void>;
   setColumns(sessionId: string, table: string, cols: string[]): void;
-  openTable(sessionId: string, schema: string, table: string, view?: TableTab["view"]): void;
+  openTable(sessionId: string, schema: string, table: string, view?: TableTab["view"], forceNew?: boolean): void;
   newQuery(sessionId: string, sql?: string): void;
   updateTab(sessionId: string, tabId: string, patch: Partial<Tab>): void;
   closeTab(sessionId: string, tabId: string): void;
@@ -217,12 +217,12 @@ export const useApp = create<State>((set, get) => {
       patchSession(sessionId, (s) => ({ columns: { ...s.columns, [table]: cols } }));
     },
 
-    openTable(sessionId, schema, table, view = "data") {
+    openTable(sessionId, schema, table, view = "data", forceNew = false) {
       const s = get().sessions.find((x) => x.id === sessionId);
       if (!s) return;
-      const found = s.tabs.find((t) => t.kind === "table" && t.schema === schema && t.table === table) as
-        | TableTab
-        | undefined;
+      const found = forceNew
+        ? undefined
+        : (s.tabs.find((t) => t.kind === "table" && t.schema === schema && t.table === table) as TableTab | undefined);
       if (found) {
         patchSession(sessionId, (s) => ({
           activeTabId: found.id,

@@ -19,6 +19,7 @@ import {
   TableProperties,
   Trash2,
   Undo2,
+  Info as InfoIcon,
   X,
   Ban,
   Code2,
@@ -29,6 +30,8 @@ import { useApp, local, type Session, type TableTab } from "../lib/store";
 import { buildFilter, FILTER_OPS, opTakesValue, toCSV, toJSON, type Filter, type FilterOp } from "../lib/sql";
 import { DataGrid, type Cursor, type GridColumn } from "./DataGrid";
 import { StructureEditor } from "./StructureEditor";
+import { TableInfoView } from "./TableInfoView";
+import { Checkbox, Select } from "./controls";
 import { ContextMenu, Kbd, Modal, type MenuItem } from "./ui";
 
 type Edits = Record<number, Record<string, string | null>>;
@@ -64,6 +67,7 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
   const [filters, setFilters] = useState<Filter[]>([]);
   const [rawMode, setRawMode] = useState(false);
   const [rawFilter, setRawFilter] = useState("");
+  const [join, setJoin] = useState<"AND" | "OR">("AND");
   const [applied, setApplied] = useState("");
 
   const [edits, setEdits] = useState<Edits>({});
@@ -252,7 +256,7 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
     ]);
   };
   const applyFilters = (list = filters) => {
-    const sql = rawMode ? rawFilter.trim() : buildFilter(conn.driver, list);
+    const sql = rawMode ? rawFilter.trim() : buildFilter(conn.driver, list, join);
     setOffset(0);
     setApplied(sql);
   };
@@ -380,16 +384,18 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
           <span className="dim sep">/</span>
           <span>{tab.table}</span>
         </div>
-        <div className="segmented" style={{ marginLeft: 8 }}>
-          <button className={tab.view === "data" ? "on" : ""} onClick={() => updateTab(session.id, tab.id, { view: "data" })}>
-            <Rows3 /> <span className="lbl">Data</span>
-          </button>
-          <button
-            className={tab.view === "structure" ? "on" : ""}
-            onClick={() => updateTab(session.id, tab.id, { view: "structure" })}
-          >
-            <TableProperties /> <span className="lbl">Structure</span>
-          </button>
+        <div className="segmented view-switch" style={{ marginLeft: 8 }}>
+          {(
+            [
+              ["data", "Content", <Rows3 key="d" />],
+              ["structure", "Structure", <TableProperties key="s" />],
+              ["info", "Info", <InfoIcon key="i" />],
+            ] as const
+          ).map(([id, label, icon]) => (
+            <button key={id} className={tab.view === id ? "on" : ""} onClick={() => updateTab(session.id, tab.id, { view: id })} title={label}>
+              {icon} <span className="lbl">{label}</span>
+            </button>
+          ))}
         </div>
         <div className="spacer" />
         {tab.view === "data" && (
@@ -433,25 +439,19 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
               >
                 <ChevronRight />
               </button>
-              <select
-                className="select sm"
-                style={{ width: 74 }}
+              <Select
+                size="sm"
+                className="w-pagesize"
                 value={limit}
                 disabled={busy}
-                onChange={(e) => {
-                  const v = +e.target.value;
+                title="Rows per page"
+                options={PAGE_SIZES.map((n) => ({ value: n, label: String(n), hint: "rows" }))}
+                onChange={(v) => {
                   local.set("tabla.pageSize", v);
                   setOffset(0);
                   setLimit(v);
                 }}
-                title="Rows per page"
-              >
-                {PAGE_SIZES.map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <button className="icon-btn" onClick={() => load()} disabled={busy} title="Refresh (Mod+R)">
               <RefreshCw />
@@ -480,30 +480,26 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
           ) : (
             filters.map((f, i) => (
               <div className="filter-row" key={f.id}>
-                <span className="dim" style={{ width: 38, fontSize: 11.5 }}>
-                  {i === 0 ? "Where" : "and"}
-                </span>
-                <select
-                  className="select sm"
+                <Checkbox
+                  checked={f.enabled}
+                  onChange={(v) => setFilters(filters.map((x) => (x.id === f.id ? { ...x, enabled: v } : x)))}
+                />
+                <span className="dim filter-join">{i === 0 ? "Where" : join.toLowerCase()}</span>
+                <Select
+                  size="sm"
+                  mono
+                  className="w-col"
                   value={f.column}
-                  onChange={(e) => setFilters(filters.map((x) => (x.id === f.id ? { ...x, column: e.target.value } : x)))}
-                >
-                  {columns.map((c) => (
-                    <option key={c.name}>{c.name}</option>
-                  ))}
-                </select>
-                <select
-                  className="select sm"
+                  options={columns.map((c) => ({ value: c.name, label: c.name, hint: c.typeName.toLowerCase() }))}
+                  onChange={(v) => setFilters(filters.map((x) => (x.id === f.id ? { ...x, column: v } : x)))}
+                />
+                <Select
+                  size="sm"
+                  className="w-op"
                   value={f.op}
-                  style={{ minWidth: 110 }}
-                  onChange={(e) =>
-                    setFilters(filters.map((x) => (x.id === f.id ? { ...x, op: e.target.value as FilterOp } : x)))
-                  }
-                >
-                  {FILTER_OPS.map((op) => (
-                    <option key={op}>{op}</option>
-                  ))}
-                </select>
+                  options={FILTER_OPS.map((op) => ({ value: op, label: op }))}
+                  onChange={(v) => setFilters(filters.map((x) => (x.id === f.id ? { ...x, op: v } : x)))}
+                />
                 {opTakesValue(f.op) ? (
                   <input
                     className="input sm mono"
@@ -540,13 +536,30 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
             <button
               className="btn ghost"
               onClick={() => {
-                if (!rawMode && filters.length) setRawFilter(buildFilter(conn.driver, filters));
+                if (!rawMode && filters.length) setRawFilter(buildFilter(conn.driver, filters, join));
                 setRawMode(!rawMode);
               }}
             >
               <Code2 /> {rawMode ? "Builder" : "Raw SQL"}
             </button>
+            {!rawMode && (
+              <code className="where-preview" title="The WHERE clause Tabla will run">
+                {filters.some((f) => f.enabled) ? `WHERE ${buildFilter(conn.driver, filters, join)}` : "No active conditions"}
+              </code>
+            )}
             <div className="spacer" />
+            {!rawMode && filters.length > 1 && (
+              <Select
+                size="sm"
+                className="w-join"
+                value={join}
+                options={[
+                  { value: "AND", label: "AND", hint: "all conditions" },
+                  { value: "OR", label: "OR", hint: "any condition" },
+                ]}
+                onChange={(v) => setJoin(v)}
+              />
+            )}
             <button className="btn ghost" onClick={clearFilters}>
               Clear
             </button>
@@ -557,7 +570,9 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
         </div>
       )}
 
-      {tab.view === "structure" ? (
+      {tab.view === "info" ? (
+        <TableInfoView session={session} schema={tab.schema} table={tab.table} />
+      ) : tab.view === "structure" ? (
         <StructureEditor
           session={session}
           schema={tab.schema}
@@ -571,6 +586,7 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
             load();
           }}
           onQuery={(sql) => newQuery(session.id, sql)}
+          onRefresh={() => setStructureRev((n) => n + 1)}
         />
       ) : (
         <div className="split-h">

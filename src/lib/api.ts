@@ -72,11 +72,30 @@ export interface ColumnInfo {
   nullable: boolean;
   defaultValue: string | null;
   primaryKey: boolean;
+  /** "PRI" | "UNI" | "MUL" | "" */
+  key: string;
+  extra: string;
 }
 
 export interface IndexInfo {
   name: string;
   definition: string;
+  unique: boolean;
+  primary: boolean;
+  method: string;
+  columns: string;
+}
+
+export interface TableDetails {
+  rowsEstimate: number | null;
+  totalBytes: number | null;
+  engine: string | null;
+  collation: string | null;
+  comment: string | null;
+  created: string | null;
+  updated: string | null;
+  ddl: string | null;
+  stats: { label: string; value: string; kind: "bytes" | "number" | "text" }[];
 }
 
 export interface TableStructure {
@@ -148,6 +167,8 @@ export const api = {
   listTables: (sessionId: string, schema: string) => invoke<TableInfo[]>("list_tables", { sessionId, schema }),
   tableStructure: (sessionId: string, schema: string, table: string) =>
     invoke<TableStructure>("table_structure", { sessionId, schema, table }),
+  tableDetails: (sessionId: string, schema: string, table: string) =>
+    invoke<TableDetails>("table_details", { sessionId, schema, table }),
   fetchRows: (sessionId: string, args: FetchArgs) => invoke<TablePage>("fetch_rows", { sessionId, args }),
   runQuery: (sessionId: string, sql: string) => invoke<QueryOutcome>("run_query", { sessionId, sql }),
   applyEdits: (sessionId: string, schema: string, table: string, edits: RowEdit[]) =>

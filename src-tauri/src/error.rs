@@ -33,7 +33,7 @@ pub type AppResult<T> = Result<T, AppError>;
 
 /// The server's own message plus DETAIL/HINT, without sqlx's prefix or the
 /// Postgres source-file location ("at line 1452") that confuses users.
-fn db_message(e: &sqlx::Error) -> String {
+pub fn db_message(e: &sqlx::Error) -> String {
     let Some(db) = e.as_database_error() else { return e.to_string() };
     let mut out = db.message().to_string();
     if let Some(pg) = db.try_downcast_ref::<sqlx::postgres::PgDatabaseError>() {

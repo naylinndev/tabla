@@ -136,6 +136,14 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         "table_structure" => json!(
             state.get(&sid()?)?.table_structure(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
         ),
+        "query_log" => json!(state.get(&sid()?)?.log_since(arg::<u64>(&a, "after")?)),
+        "clear_query_log" => {
+            state.get(&sid()?)?.clear_log();
+            Value::Null
+        }
+        "table_details" => json!(
+            state.get(&sid()?)?.table_details(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
+        ),
         "fetch_rows" => json!(state.get(&sid()?)?.fetch_rows(&arg::<FetchArgs>(&a, "args")?).await?),
         "run_query" => json!(state.query(&sid()?, &arg::<String>(&a, "sql")?).await?),
         "apply_edits" => json!(
