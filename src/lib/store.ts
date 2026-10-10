@@ -1,7 +1,16 @@
 import { create } from "zustand";
 import { api, errorMessage, type ConnectionConfig, type TableInfo } from "./api";
 
-export type TableTab = { id: string; kind: "table"; schema: string; table: string; view: "data" | "structure" | "info" };
+export type TableView = "data" | "structure" | "relations" | "triggers" | "info";
+export type TableTab = {
+  id: string;
+  kind: "table";
+  schema: string;
+  table: string;
+  view: TableView;
+  /** Opened by following a foreign key: start filtered to this value. */
+  initialFilter?: { column: string; value: string | null };
+};
 export type QueryTab = { id: string; kind: "query"; title: string; sql: string };
 export type Tab = TableTab | QueryTab;
 
@@ -47,7 +56,7 @@ interface State {
   setSchema(sessionId: string, schema: string): Promise<void>;
   refreshTables(sessionId: string): Promise<void>;
   setColumns(sessionId: string, table: string, cols: string[]): void;
-  openTable(sessionId: string, schema: string, table: string, view?: TableTab["view"], forceNew?: boolean): void;
+  openTable(sessionId: string, schema: string, table: string, view?: TableView, forceNew?: boolean, initialFilter?: TableTab["initialFilter"]): void;
   newQuery(sessionId: string, sql?: string): void;
   updateTab(sessionId: string, tabId: string, patch: Partial<Tab>): void;
   closeTab(sessionId: string, tabId: string): void;
@@ -217,7 +226,7 @@ export const useApp = create<State>((set, get) => {
       patchSession(sessionId, (s) => ({ columns: { ...s.columns, [table]: cols } }));
     },
 
-    openTable(sessionId, schema, table, view = "data", forceNew = false) {
+    openTable(sessionId, schema, table, view = "data", forceNew = false, initialFilter) {
       const s = get().sessions.find((x) => x.id === sessionId);
       if (!s) return;
       const found = forceNew
@@ -230,7 +239,7 @@ export const useApp = create<State>((set, get) => {
         }));
         return;
       }
-      const tab: TableTab = { id: uid(), kind: "table", schema, table, view };
+      const tab: TableTab = { id: uid(), kind: "table", schema, table, view, initialFilter };
       patchSession(sessionId, (s) => {
         // Insert next to the active tab, like a browser.
         const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);

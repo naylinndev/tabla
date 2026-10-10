@@ -141,6 +141,9 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
             state.get(&sid()?)?.clear_log();
             Value::Null
         }
+        "table_relations" => json!(
+            state.get(&sid()?)?.table_relations(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
+        ),
         "table_details" => json!(
             state.get(&sid()?)?.table_details(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
         ),

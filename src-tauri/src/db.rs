@@ -106,6 +106,42 @@ pub struct IndexInfo {
     pub columns: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignKey {
+    pub name: String,
+    pub schema: String,
+    pub table: String,
+    pub columns: Vec<String>,
+    pub ref_schema: String,
+    pub ref_table: String,
+    pub ref_columns: Vec<String>,
+    pub on_update: String,
+    pub on_delete: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerInfo {
+    pub name: String,
+    /// BEFORE | AFTER | INSTEAD OF
+    pub timing: String,
+    /// INSERT, UPDATE, DELETE (comma separated)
+    pub event: String,
+    pub enabled: bool,
+    pub definition: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableRelations {
+    /// Keys on this table pointing elsewhere.
+    pub outgoing: Vec<ForeignKey>,
+    /// Keys on other tables pointing at this one.
+    pub incoming: Vec<ForeignKey>,
+    pub triggers: Vec<TriggerInfo>,
+}
+
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TableDetails {
@@ -553,6 +589,141 @@ impl Session {
             .collect();
 
         Ok(TableStructure { columns, indexes })
+    }
+
+    pub async fn table_relations(&self, schema: &str, table: &str) -> AppResult<TableRelations> {
+        let d = self.driver;
+        let (s, t) = (d.quote_literal(schema), d.quote_literal(table));
+        let split = |v: Option<String>| -> Vec<String> {
+            v.unwrap_or_default().split(", ").filter(|x| !x.is_empty()).map(str::to_string).collect()
+        };
+        let pg_action = |c: &str| match c {
+            "r" => "RESTRICT",
+            "c" => "CASCADE",
+            "n" => "SET NULL",
+            "d" => "SET DEFAULT",
+            _ => "NO ACTION",
+        };
+        let fk_rows = |rows: Vec<Vec<Option<String>>>, pg: bool| -> Vec<ForeignKey> {
+            rows.into_iter()
+                .filter_map(|r| {
+                    let mut it = r.into_iter();
+                    let mut n = || it.next().flatten();
+                    let (name, sch, tbl, cols, rs, rt, rc, up, del) = (n()?, n(), n(), n(), n(), n(), n(), n(), n());
+                    let act = |v: Option<String>| {
+                        let v = v.unwrap_or_default();
+                        if pg { pg_action(&v).to_string() } else if v.is_empty() { "NO ACTION".into() } else { v.to_uppercase() }
+                    };
+                    Some(ForeignKey {
+                        name,
+                        schema: sch.unwrap_or_default(),
+                        table: tbl.unwrap_or_default(),
+                        columns: split(cols),
+                        ref_schema: rs.unwrap_or_default(),
+                        ref_table: rt.unwrap_or_default(),
+                        ref_columns: split(rc),
+                        on_update: act(up),
+                        on_delete: act(del),
+                    })
+                })
+                .collect()
+        };
+
+        let (outgoing, incoming) = match d {
+            Driver::Postgres => {
+                let base = "SELECT con.conname, n.nspname, c.relname, \
+                     (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.conkey) WITH ORDINALITY k(attnum, n) \
+                       JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum), \
+                     nf.nspname, cf.relname, \
+                     (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.confkey) WITH ORDINALITY k(attnum, n) \
+                       JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum), \
+                     con.confupdtype::text, con.confdeltype::text \
+                     FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+                     JOIN pg_class cf ON cf.oid = con.confrelid JOIN pg_namespace nf ON nf.oid = cf.relnamespace WHERE con.contype = 'f'";
+                (
+                    fk_rows(self.text_rows(&format!("{base} AND n.nspname = {s} AND c.relname = {t} ORDER BY 1")).await?, true),
+                    fk_rows(self.text_rows(&format!("{base} AND nf.nspname = {s} AND cf.relname = {t} ORDER BY 2, 3, 1")).await?, true),
+                )
+            }
+            Driver::Mysql => {
+                let base = "SELECT k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, \
+                     GROUP_CONCAT(k.COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR ', '), k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, \
+                     GROUP_CONCAT(k.REFERENCED_COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR ', '), r.UPDATE_RULE, r.DELETE_RULE \
+                     FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
+                     ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME \
+                     WHERE k.REFERENCED_TABLE_NAME IS NOT NULL";
+                let group = "GROUP BY k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, r.UPDATE_RULE, r.DELETE_RULE";
+                (
+                    fk_rows(self.text_rows(&format!("{base} AND k.TABLE_SCHEMA = {s} AND k.TABLE_NAME = {t} {group} ORDER BY 1")).await?, false),
+                    fk_rows(
+                        self.text_rows(&format!("{base} AND k.REFERENCED_TABLE_SCHEMA = {s} AND k.REFERENCED_TABLE_NAME = {t} {group} ORDER BY 3, 1"))
+                            .await?,
+                        false,
+                    ),
+                )
+            }
+            Driver::Sqlite => {
+                let one = |tbl: &str| {
+                    format!(
+                        "SELECT 'fk_' || id, {s}, {}, group_concat(\"from\", ', '), {s}, \"table\", group_concat(\"to\", ', '), on_update, on_delete \
+                         FROM pragma_foreign_key_list({}, {s}) GROUP BY id ORDER BY id",
+                        d.quote_literal(tbl),
+                        d.quote_literal(tbl)
+                    )
+                };
+                let outgoing = fk_rows(self.text_rows(&one(table)).await?, false);
+                // SQLite has no reverse index: scan the other tables' keys.
+                let mut incoming = Vec::new();
+                for other in self.list_tables(schema).await?.into_iter().filter(|x| x.kind == "table" && x.name != table) {
+                    for fk in fk_rows(self.text_rows(&one(&other.name)).await?, false) {
+                        if fk.ref_table == table {
+                            incoming.push(fk);
+                        }
+                    }
+                }
+                (outgoing, incoming)
+            }
+        };
+
+        let trig_sql = match d {
+            Driver::Postgres => format!(
+                "SELECT t.tgname, CASE WHEN t.tgtype & 2 = 2 THEN 'BEFORE' WHEN t.tgtype & 64 = 64 THEN 'INSTEAD OF' ELSE 'AFTER' END, \
+                 concat_ws(', ', CASE WHEN t.tgtype & 4 = 4 THEN 'INSERT' END, CASE WHEN t.tgtype & 16 = 16 THEN 'UPDATE' END, \
+                   CASE WHEN t.tgtype & 8 = 8 THEN 'DELETE' END, CASE WHEN t.tgtype & 32 = 32 THEN 'TRUNCATE' END), \
+                 t.tgenabled <> 'D', pg_get_triggerdef(t.oid, true) \
+                 FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE NOT t.tgisinternal AND n.nspname = {s} AND c.relname = {t} ORDER BY t.tgname"
+            ),
+            Driver::Mysql => format!(
+                "SELECT TRIGGER_NAME, ACTION_TIMING, EVENT_MANIPULATION, '1', \
+                 CONCAT('CREATE TRIGGER `', TRIGGER_NAME, '` ', ACTION_TIMING, ' ', EVENT_MANIPULATION, ' ON `', EVENT_OBJECT_TABLE, \
+                   '` FOR EACH ROW ', ACTION_STATEMENT) \
+                 FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = {s} AND EVENT_OBJECT_TABLE = {t} ORDER BY ACTION_ORDER"
+            ),
+            Driver::Sqlite => format!(
+                "SELECT name, CASE WHEN upper(sql) LIKE '%INSTEAD OF%' THEN 'INSTEAD OF' WHEN upper(sql) LIKE '%BEFORE%' THEN 'BEFORE' ELSE 'AFTER' END, \
+                 CASE WHEN upper(sql) LIKE '%INSERT%ON%' THEN 'INSERT' WHEN upper(sql) LIKE '%DELETE%ON%' THEN 'DELETE' ELSE 'UPDATE' END, \
+                 '1', sql FROM {}.sqlite_master WHERE type = 'trigger' AND tbl_name = {t} ORDER BY name",
+                d.quote_ident(schema)
+            ),
+        };
+        let triggers = self
+            .text_rows(&trig_sql)
+            .await?
+            .into_iter()
+            .filter_map(|r| {
+                let mut it = r.into_iter();
+                let mut n = || it.next().flatten();
+                Some(TriggerInfo {
+                    name: n()?,
+                    timing: n().unwrap_or_default(),
+                    event: n().unwrap_or_default(),
+                    enabled: matches!(n().as_deref(), Some("t" | "1" | "true")),
+                    definition: n().unwrap_or_default(),
+                })
+            })
+            .collect();
+        Ok(TableRelations { outgoing, incoming, triggers })
     }
 
     pub async fn table_details(&self, schema: &str, table: &str) -> AppResult<TableDetails> {
@@ -1193,5 +1364,92 @@ mod tests {
         let s = Session::connect(&cfg, None).await.unwrap();
         assert!(s.apply_edits("main", "notes", vec![RowEdit::Insert { values: vec![] }]).await.is_err());
         assert!(s.run_script("DELETE FROM notes", 10).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod relation_tests {
+    //! Self-contained fixtures (rel_parent / rel_child) on the same test servers as `tests`.
+    use super::*;
+
+    fn cfg(var: &str, driver: Driver) -> Option<ConnectionConfig> {
+        let v = std::env::var(var).ok()?;
+        let mut c: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "rel-test", "name": "rel", "driver": driver, "sslMode": "disable"
+        }))
+        .unwrap();
+        if driver == Driver::Sqlite {
+            c.database = v;
+        } else {
+            let p: Vec<&str> = v.split(':').collect();
+            (c.host, c.port, c.user, c.database) = (p[0].into(), p[1].parse().unwrap(), p[2].into(), p[3].into());
+        }
+        Some(c)
+    }
+
+    async fn check(s: &Session, schema: &str, setup: &str, teardown: &str) {
+        s.run_script(teardown, 1).await.ok();
+        s.run_script(setup, 1).await.unwrap();
+        let child = s.table_relations(schema, "rel_child").await.unwrap();
+        assert_eq!(child.outgoing.len(), 1, "outgoing");
+        let fk = &child.outgoing[0];
+        assert_eq!((fk.ref_table.as_str(), fk.columns.join(","), fk.ref_columns.join(",")), ("rel_parent", "parent_id".into(), "id".into()));
+        assert_eq!(fk.on_delete, "CASCADE");
+        assert_eq!(child.triggers.len(), 1, "triggers");
+        assert_eq!(child.triggers[0].timing, "BEFORE");
+        assert!(child.triggers[0].event.contains("INSERT"));
+        assert!(child.triggers[0].definition.to_uppercase().contains("TRIGGER"));
+        let parent = s.table_relations(schema, "rel_parent").await.unwrap();
+        assert_eq!(parent.incoming.len(), 1, "incoming");
+        assert_eq!(parent.incoming[0].table, "rel_child");
+        s.run_script(teardown, 1).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn postgres_relations() {
+        let Some(c) = cfg("TABLA_TEST_PG", Driver::Postgres) else { return };
+        let s = Session::connect(&c, None).await.unwrap();
+        check(
+            &s,
+            "public",
+            "CREATE TABLE rel_parent (id serial PRIMARY KEY, name text); \
+             CREATE TABLE rel_child (id serial PRIMARY KEY, parent_id int REFERENCES rel_parent(id) ON DELETE CASCADE, note text); \
+             CREATE FUNCTION rel_touch() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN NEW.note := coalesce(NEW.note, 'x'); RETURN NEW; END $$; \
+             CREATE TRIGGER rel_child_touch BEFORE INSERT ON rel_child FOR EACH ROW EXECUTE FUNCTION rel_touch();",
+            "DROP TABLE IF EXISTS rel_child; DROP TABLE IF EXISTS rel_parent; DROP FUNCTION IF EXISTS rel_touch();",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn mysql_relations() {
+        let Some(c) = cfg("TABLA_TEST_MYSQL", Driver::Mysql) else { return };
+        let s = Session::connect(&c, None).await.unwrap();
+        let db = c.database.clone();
+        check(
+            &s,
+            &db,
+            "CREATE TABLE rel_parent (id INT AUTO_INCREMENT PRIMARY KEY, name TEXT); \
+             CREATE TABLE rel_child (id INT AUTO_INCREMENT PRIMARY KEY, parent_id INT, note TEXT, \
+               CONSTRAINT fk_rel FOREIGN KEY (parent_id) REFERENCES rel_parent(id) ON DELETE CASCADE); \
+             CREATE TRIGGER rel_child_touch BEFORE INSERT ON rel_child FOR EACH ROW SET NEW.note = IFNULL(NEW.note, 'x');",
+            "DROP TABLE IF EXISTS rel_child; DROP TABLE IF EXISTS rel_parent;",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_relations() {
+        let Some(c) = cfg("TABLA_TEST_SQLITE", Driver::Sqlite) else { return };
+        let s = Session::connect(&c, None).await.unwrap();
+        check(
+            &s,
+            "main",
+            "CREATE TABLE rel_parent (id INTEGER PRIMARY KEY, name TEXT); \
+             CREATE TABLE rel_child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES rel_parent(id) ON DELETE CASCADE, note TEXT); \
+             CREATE TRIGGER rel_child_touch BEFORE INSERT ON rel_child BEGIN SELECT 1; END;",
+            "DROP TABLE IF EXISTS rel_child; DROP TABLE IF EXISTS rel_parent;",
+        )
+        .await;
     }
 }

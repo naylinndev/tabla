@@ -20,6 +20,8 @@ import {
   Trash2,
   Undo2,
   Info as InfoIcon,
+  GitFork,
+  Zap,
   X,
   Ban,
   Code2,
@@ -31,6 +33,7 @@ import { buildFilter, FILTER_OPS, opTakesValue, toCSV, toJSON, type Filter, type
 import { DataGrid, type Cursor, type GridColumn } from "./DataGrid";
 import { StructureEditor } from "./StructureEditor";
 import { TableInfoView } from "./TableInfoView";
+import { RelationsView, TriggersView, useRelations } from "./RelationsViews";
 import { Checkbox, Select } from "./controls";
 import { ContextMenu, Kbd, Modal, type MenuItem } from "./ui";
 
@@ -63,12 +66,17 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
   const [offset, setOffset] = useState(0);
   const [sort, setSort] = useState<{ column: string; desc: boolean } | null>(null);
 
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [filters, setFilters] = useState<Filter[]>([]);
+  const init = tab.initialFilter;
+  const [filterOpen, setFilterOpen] = useState(!!init);
+  const [filters, setFilters] = useState<Filter[]>(() =>
+    init ? [{ id: crypto.randomUUID(), column: init.column, op: init.value === null ? "is null" : "=", value: init.value ?? "", enabled: true }] : [],
+  );
   const [rawMode, setRawMode] = useState(false);
   const [rawFilter, setRawFilter] = useState("");
   const [join, setJoin] = useState<"AND" | "OR">("AND");
-  const [applied, setApplied] = useState("");
+  const [applied, setApplied] = useState(() =>
+    init ? buildFilter(conn.driver, [{ id: "x", column: init.column, op: init.value === null ? "is null" : "=", value: init.value ?? "", enabled: true }]) : "",
+  );
 
   const [edits, setEdits] = useState<Edits>({});
   const [deleted, setDeleted] = useState<Set<number>>(new Set());
@@ -82,6 +90,12 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
   const [menu, setMenu] = useState<{ x: number; y: number; row: number; col: number } | null>(null);
 
   const rows = page?.result.rows ?? [];
+  const { rel } = useRelations(session, tab.schema, tab.table);
+  const fkByColumn = useMemo(() => {
+    const m = new Map<string, { schema: string; table: string; column: string }>();
+    for (const f of rel?.outgoing ?? []) if (f.columns.length === 1) m.set(f.columns[0], { schema: f.refSchema || tab.schema, table: f.refTable, column: f.refColumns[0] });
+    return m;
+  }, [rel, tab.schema]);
   const pkCols = useMemo(() => structure?.columns.filter((c) => c.primaryKey).map((c) => c.name) ?? [], [structure]);
   const editable = !conn.readOnly && !isView && pkCols.length > 0;
   const editBlockReason = conn.readOnly
@@ -389,6 +403,8 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
             [
               ["data", "Content", <Rows3 key="d" />],
               ["structure", "Structure", <TableProperties key="s" />],
+              ["relations", "Relations", <GitFork key="r" />],
+              ["triggers", "Triggers", <Zap key="t" />],
               ["info", "Info", <InfoIcon key="i" />],
             ] as const
           ).map(([id, label, icon]) => (
@@ -572,6 +588,10 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
 
       {tab.view === "info" ? (
         <TableInfoView session={session} schema={tab.schema} table={tab.table} />
+      ) : tab.view === "relations" ? (
+        <RelationsView session={session} schema={tab.schema} table={tab.table} editable={!conn.readOnly && !isView} />
+      ) : tab.view === "triggers" ? (
+        <TriggersView session={session} schema={tab.schema} table={tab.table} editable={!conn.readOnly && !isView} />
       ) : tab.view === "structure" ? (
         <StructureEditor
           session={session}
@@ -622,6 +642,12 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
                 emptyText={applied ? "No rows match this filter" : "This table is empty"}
                 columnOrder={columnOrder}
                 onReorder={saveOrder}
+                linkColumns={fkByColumn.size ? new Set(columns.map((c, i) => (fkByColumn.has(c.name) ? i : -1)).filter((i) => i >= 0)) : undefined}
+                onFollow={(r, c) => {
+                  const fk = fkByColumn.get(columns[c].name);
+                  const v = getCell(r, c);
+                  if (fk && v != null) useApp.getState().openTable(session.id, fk.schema, fk.table, "data", true, { column: fk.column, value: v });
+                }}
                 onCopied={(w) => toast(`Copied ${w}`, "success")}
               />
             )}

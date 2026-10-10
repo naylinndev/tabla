@@ -3362,3 +3362,55 @@ html:not(.mac) .titlebar-space {
   height: 12px;
   stroke-width: 3;
 }
+
+/* Relations / triggers grids */
+.sg.fk .sg-row {
+  grid-template-columns: minmax(140px, 1.2fr) minmax(110px, 1fr) minmax(160px, 1.3fr) 110px 110px 40px;
+  min-width: 700px;
+  padding-left: 12px;
+}
+.sg.fk-in .sg-row {
+  grid-template-columns: minmax(140px, 1.2fr) minmax(120px, 1fr) minmax(120px, 1fr) 110px 40px;
+  min-width: 600px;
+  padding-left: 12px;
+}
+.sg.trg .sg-row {
+  grid-template-columns: minmax(180px, 1.5fr) 110px minmax(150px, 1fr) 80px;
+  min-width: 520px;
+  padding-left: 12px;
+}
+.fk-act {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+}
+.fk-act.warn {
+  color: var(--warn);
+}
+.fk-link {
+  margin-left: auto;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.g-row:hover .fk-link,
+.g-cell.focus .fk-link {
+  opacity: 1;
+}
+.fk-link svg {
+  width: 12px;
+  height: 12px;
+}
+.view-switch button {
+  padding: 0 10px;
+}

@@ -36,6 +36,7 @@ pub fn run() {
             commands::table_structure,
             commands::fetch_rows,
             commands::table_details,
+            commands::table_relations,
             commands::query_log,
             commands::clear_query_log,
             commands::run_query,

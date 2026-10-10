@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowDown, ArrowUp, Inbox, KeyRound } from "lucide-react";
+import { ArrowDown, ArrowRight, ArrowUp, Inbox, KeyRound } from "lucide-react";
 import { isBoolType, isJsonType, isNumericType, toTSV } from "../lib/sql";
 
 export interface GridColumn {
@@ -38,6 +38,9 @@ interface Props {
   /** Display order by column name (drag headers to change it). */
   columnOrder?: string[];
   onReorder?(names: string[]): void;
+  /** Foreign-key columns: cells get an arrow that opens the referenced row. */
+  linkColumns?: Set<number>;
+  onFollow?(row: number, col: number): void;
 }
 
 const ROW_H = 32;
@@ -378,7 +381,22 @@ export const DataGrid = memo(function DataGrid(p: Props) {
                           }}
                         />
                       ) : (
-                        <CellValue v={p.getCell(r, ci)} type={c.typeName} />
+                        <>
+                          <CellValue v={p.getCell(r, ci)} type={c.typeName} />
+                          {p.linkColumns?.has(ci) && p.getCell(r, ci) != null && (
+                            <button
+                              className="fk-link"
+                              title="Open the referenced row"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                p.onFollow?.(r, ci);
+                              }}
+                            >
+                              <ArrowRight />
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   );

@@ -86,6 +86,32 @@ export interface IndexInfo {
   columns: string;
 }
 
+export interface ForeignKey {
+  name: string;
+  schema: string;
+  table: string;
+  columns: string[];
+  refSchema: string;
+  refTable: string;
+  refColumns: string[];
+  onUpdate: string;
+  onDelete: string;
+}
+
+export interface TriggerInfo {
+  name: string;
+  timing: string;
+  event: string;
+  enabled: boolean;
+  definition: string;
+}
+
+export interface TableRelations {
+  outgoing: ForeignKey[];
+  incoming: ForeignKey[];
+  triggers: TriggerInfo[];
+}
+
 export interface TableDetails {
   rowsEstimate: number | null;
   totalBytes: number | null;
@@ -167,6 +193,8 @@ export const api = {
   listTables: (sessionId: string, schema: string) => invoke<TableInfo[]>("list_tables", { sessionId, schema }),
   tableStructure: (sessionId: string, schema: string, table: string) =>
     invoke<TableStructure>("table_structure", { sessionId, schema, table }),
+  tableRelations: (sessionId: string, schema: string, table: string) =>
+    invoke<TableRelations>("table_relations", { sessionId, schema, table }),
   tableDetails: (sessionId: string, schema: string, table: string) =>
     invoke<TableDetails>("table_details", { sessionId, schema, table }),
   fetchRows: (sessionId: string, args: FetchArgs) => invoke<TablePage>("fetch_rows", { sessionId, args }),
