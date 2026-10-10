@@ -37,7 +37,14 @@ for PostgreSQL, MySQL, MariaDB, SQLite, Redis and the clouds they run on.
 - **Structure view** showing columns, types, defaults, primary keys and indexes.
 - **Several connections open at once,** switchable from the left rail.
 - **Command palette** (<kbd>⌘ K</kbd>) to jump to any table, connection or action.
-- **Export** results and table pages to CSV or typed JSON.
+- **Export** results and table pages to CSV or typed JSON, and **import CSV** into any table (auto column mapping, one transaction).
+- **Relations and triggers.** See foreign keys both ways, add or drop them, and click a foreign-key value to jump to the referenced row. List, inspect, enable, disable and drop triggers.
+- **Users and privileges.** Accounts, grants, password changes, role attributes, grant/revoke presets, and a one-click **read-only user** (ideal for AI tools and dashboards).
+- **Table info.** Engine, collation, sizes, row counts, auto increment and highlighted create syntax.
+- **Console.** A live log of every statement Tabla sends to the server, with timing and errors (passwords masked, never written to disk).
+- **Table actions.** Rename, duplicate, truncate and delete tables, always with the SQL shown first and type-to-confirm for destructive actions.
+- **Redis.** Key browser with types and TTLs, typed editors for strings (JSON aware), hashes, lists, sets, sorted sets and streams, and a CLI that asks before writes on production.
+- **Productive grid.** Duplicate rows (⌘D), hide or reorder columns, follow foreign keys, back/forward between tabs.
 - **Copy for AI.** Copy a schema as an AI-ready prompt, or copy a failing query together with its error and related tables.
 - **Environment tags and production guardrails.** Production connections get a red accent and ask for confirmation before committing changes.
 - **Read-only mode** for each connection, enforced on the database server, not only in the UI.
@@ -153,6 +160,9 @@ Tools exposed: `list_connections`, `get_schema`, `describe_table` and `run_query
 | Filter rows | <kbd>⌘ F</kbd> | <kbd>Ctrl F</kbd> |
 | Row inspector | <kbd>⌘ I</kbd> | <kbd>Ctrl I</kbd> |
 | Edit cell | <kbd>↵</kbd> or start typing | same |
+| Duplicate row | <kbd>⌘ D</kbd> | <kbd>Ctrl D</kbd> |
+| Console (query log) | <kbd>⌘ ⇧ C</kbd> | <kbd>Ctrl Shift C</kbd> |
+| Back / forward | <kbd>⌘ ⌥ ← →</kbd> | <kbd>Ctrl Alt ← →</kbd> |
 | Delete selected rows | <kbd>Delete</kbd> | same |
 
 ## Development
@@ -229,8 +239,7 @@ src-tauri/            Rust backend
 ## Roadmap
 
 - [ ] SQL Server, MongoDB, ClickHouse, DuckDB, Oracle
-- [ ] Create tables, indexes and foreign keys visually; DDL view
-- [ ] Import CSV
+- [ ] Create tables and indexes visually
 - [ ] Query cancellation and streaming large results
 - [ ] Saved queries and snippets
 - [ ] ER diagram
