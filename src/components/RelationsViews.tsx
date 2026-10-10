@@ -237,7 +237,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
 ]);
-const DIALECT = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL };
 
 function triggerTemplate(d: Driver, schema: string, table: string): string {
   const tq = `${quoteIdent(d, schema)}.${quoteIdent(d, table)}`;

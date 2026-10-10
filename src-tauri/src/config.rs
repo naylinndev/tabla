@@ -21,6 +21,7 @@ pub enum Driver {
     Postgres,
     Mysql,
     Sqlite,
+    Redis,
 }
 
 impl Driver {
@@ -29,6 +30,7 @@ impl Driver {
             Driver::Postgres => 5432,
             Driver::Mysql => 3306,
             Driver::Sqlite => 0,
+            Driver::Redis => 6379,
         }
     }
 

@@ -159,7 +159,7 @@ async fn call_tool(state: &mut State, params: &Value) -> Value {
 }
 
 fn shared() -> AppResult<Vec<ConnectionConfig>> {
-    Ok(config::load()?.into_iter().filter(|c| c.ai_access).collect())
+    Ok(config::load()?.into_iter().filter(|c| c.ai_access && c.driver != config::Driver::Redis).collect())
 }
 
 fn list_connections() -> AppResult<String> {
@@ -176,6 +176,7 @@ fn list_connections() -> AppResult<String> {
                 config::Driver::Postgres => "PostgreSQL",
                 config::Driver::Mysql => "MySQL",
                 config::Driver::Sqlite => "SQLite",
+                config::Driver::Redis => "Redis",
             };
             let provider = if c.provider.is_empty() || c.provider == format!("{:?}", c.driver).to_lowercase() {
                 String::new()

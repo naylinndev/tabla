@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Code2, Copy, GripVertical, Info, KeyRound, Minus, Plus, RefreshCw, RotateCcw, ShieldAlert, Wand2 } from "lucide-react";
-import { api, errorMessage, type AlterColumn, type AlterRequest, type Driver, type TableStructure } from "../lib/api";
+import { api, errorMessage, type AlterColumn, type AlterRequest, type TableStructure } from "../lib/api";
 import { useApp, type Session } from "../lib/store";
 import { joinType, splitType } from "../lib/format";
 import { Modal } from "./ui";
@@ -20,7 +20,7 @@ interface Draft {
 }
 
 /** Base type names (length goes in its own column). */
-const TYPES: Record<Driver, string[]> = {
+const TYPES: Record<string, string[]> = {
   postgres: ["text", "character varying", "character", "integer", "bigint", "smallint", "serial", "bigserial", "boolean", "numeric", "real", "double precision", "date", "time without time zone", "timestamp without time zone", "timestamp with time zone", "interval", "jsonb", "json", "uuid", "bytea", "inet", "text[]", "integer[]"],
   mysql: ["int", "bigint", "smallint", "tinyint", "mediumint", "decimal", "float", "double", "bit", "varchar", "char", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "json", "enum", "blob", "longblob", "binary", "varbinary"],
   sqlite: ["TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"],

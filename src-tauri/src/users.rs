@@ -48,6 +48,7 @@ impl Session {
                 )
                 .await
                 .map_err(|e| AppError::msg(format!("Can't list accounts: {e}. Your user needs SELECT on mysql.user.")))?,
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };
         Ok(rows
@@ -97,6 +98,7 @@ impl Session {
                 )
             }
             Driver::Mysql => format!("SHOW GRANTS FOR {}@{}", d.quote_literal(name), d.quote_literal(host)),
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };
         let rows = self.run_script(&sql, 10_000).await?;

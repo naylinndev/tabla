@@ -16,7 +16,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
   { tag: [t.typeName, t.function(t.variableName), t.standard(t.name)], color: "var(--syn-fn)" },
 ]);
-const DIALECT = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL };
 
 export function TableInfoView({ session, schema, table }: { session: Session; schema: string; table: string }) {
   const [info, setInfo] = useState<TableDetails | null>(null);

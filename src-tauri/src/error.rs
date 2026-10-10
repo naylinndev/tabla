@@ -46,3 +46,8 @@ pub fn db_message(e: &sqlx::Error) -> String {
     }
     out
 }
+
+/// Returned by SQL-only code paths if they are ever reached for a Redis session.
+pub fn not_sql() -> AppError {
+    AppError::msg("This isn't available for Redis connections")
+}

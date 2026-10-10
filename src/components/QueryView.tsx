@@ -45,7 +45,7 @@ const baseTheme = EditorView.theme({
   ".cm-gutterElement": { padding: "0 6px 0 14px !important" },
 });
 
-const DIALECT = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL };
 
 export function QueryView({ session, tab, active }: { session: Session; tab: QueryTab; active: boolean }) {
   const updateTab = useApp((s) => s.updateTab);
@@ -146,7 +146,8 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
     const view = cm.current?.view;
     if (!view) return;
     try {
-      const lang = session.connection.driver === "postgres" ? "postgresql" : session.connection.driver;
+      const d = session.connection.driver;
+      const lang = d === "postgres" ? "postgresql" : d === "mysql" ? "mysql" : "sqlite";
       const out = formatSql(view.state.doc.toString(), { language: lang, keywordCase: "upper", tabWidth: 2 });
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: out } });
     } catch (e) {

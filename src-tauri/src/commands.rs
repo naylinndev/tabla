@@ -14,6 +14,8 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     alter::AlterRequest,
+    config::Driver,
+    redis_db::{RedisEdit, RedisOverview, RedisSession, RedisValue, ScanPage},
     users::UserInfo,
     config::{self, ConnectionConfig},
     db::{FetchArgs, LogEntry, TableRelations, ResultSet, RowEdit, Session, TableDetails, TableInfo, TablePage, TableStructure},
@@ -23,9 +25,14 @@ use crate::{
 /// Hard cap on rows returned to the UI for a single ad-hoc statement.
 const QUERY_ROW_LIMIT: usize = 10_000;
 
+pub enum AnySession {
+    Sql(Arc<Session>),
+    Redis(Arc<RedisSession>),
+}
+
 #[derive(Default)]
 pub struct AppState {
-    sessions: Mutex<HashMap<String, Arc<Session>>>,
+    sessions: Mutex<HashMap<String, AnySession>>,
 }
 
 #[derive(Serialize)]
@@ -63,17 +70,32 @@ pub struct McpCommand {
 }
 
 impl AppState {
+    fn closed() -> AppError {
+        AppError::msg("This connection was closed. Reconnect to continue.")
+    }
+
     pub fn get(&self, id: &str) -> AppResult<Arc<Session>> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(id)
-            .cloned()
-            .ok_or_else(|| AppError::msg("This connection was closed. Reconnect to continue."))
+        match self.sessions.lock().unwrap().get(id) {
+            Some(AnySession::Sql(s)) => Ok(s.clone()),
+            Some(AnySession::Redis(_)) => Err(crate::error::not_sql()),
+            None => Err(Self::closed()),
+        }
+    }
+
+    pub fn get_redis(&self, id: &str) -> AppResult<Arc<RedisSession>> {
+        match self.sessions.lock().unwrap().get(id) {
+            Some(AnySession::Redis(s)) => Ok(s.clone()),
+            Some(AnySession::Sql(_)) => Err(AppError::msg("Not a Redis connection")),
+            None => Err(Self::closed()),
+        }
     }
 
     pub async fn test(&self, config: ConnectionConfig) -> AppResult<String> {
         let password = config::resolve_password(&config)?;
+        if config.driver == Driver::Redis {
+            let s = RedisSession::open(&config, password).await?;
+            return Ok(s.overview().await?.version);
+        }
         let session = Session::connect(&config, password).await?;
         let version = session.server_version().await;
         session.close().await;
@@ -82,20 +104,47 @@ impl AppState {
 
     pub async fn open(&self, config: ConnectionConfig) -> AppResult<SessionInfo> {
         let password = config::resolve_password(&config)?;
+        let session_id = uuid::Uuid::new_v4().to_string();
+        if config.driver == Driver::Redis {
+            let s = RedisSession::open(&config, password).await?;
+            let ov = s.overview().await?;
+            let current = config.database.trim().parse::<u32>().unwrap_or(0).to_string();
+            let schemas = ov.databases.iter().map(|d| d.index.to_string()).collect();
+            self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Redis(Arc::new(s)));
+            return Ok(SessionInfo { session_id, server_version: ov.version, schemas, current_schema: Some(current) });
+        }
         let session = Session::connect(&config, password).await?;
         let server_version = session.server_version().await?;
         let schemas = session.list_schemas().await?;
         let current_schema = session.current_schema().await?;
-        let session_id = uuid::Uuid::new_v4().to_string();
-        self.sessions.lock().unwrap().insert(session_id.clone(), Arc::new(session));
+        self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Sql(Arc::new(session)));
         Ok(SessionInfo { session_id, server_version, schemas, current_schema })
     }
 
     pub async fn close(&self, session_id: &str) {
         let session = self.sessions.lock().unwrap().remove(session_id);
-        if let Some(s) = session {
-            s.close().await;
+        match session {
+            Some(AnySession::Sql(s)) => s.close().await,
+            Some(AnySession::Redis(s)) => s.close().await,
+            None => {}
         }
+    }
+
+    pub fn log_since(&self, id: &str, after: u64) -> AppResult<Vec<LogEntry>> {
+        match self.sessions.lock().unwrap().get(id) {
+            Some(AnySession::Sql(s)) => Ok(s.log_since(after)),
+            Some(AnySession::Redis(s)) => Ok(s.log_since(after)),
+            None => Err(Self::closed()),
+        }
+    }
+
+    pub fn clear_log(&self, id: &str) -> AppResult<()> {
+        match self.sessions.lock().unwrap().get(id) {
+            Some(AnySession::Sql(s)) => s.clear_log(),
+            Some(AnySession::Redis(s)) => s.clear_log(),
+            None => return Err(Self::closed()),
+        }
+        Ok(())
     }
 
     pub async fn query(&self, session_id: &str, sql: &str) -> AppResult<QueryOutcome> {
@@ -243,13 +292,42 @@ pub async fn table_structure(
 
 #[tauri::command]
 pub fn query_log(state: State<'_, AppState>, session_id: String, after: u64) -> AppResult<Vec<LogEntry>> {
-    Ok(state.get(&session_id)?.log_since(after))
+    state.log_since(&session_id, after)
 }
 
 #[tauri::command]
 pub fn clear_query_log(state: State<'_, AppState>, session_id: String) -> AppResult<()> {
-    state.get(&session_id)?.clear_log();
-    Ok(())
+    state.clear_log(&session_id)
+}
+
+#[tauri::command]
+pub async fn redis_overview(state: State<'_, AppState>, session_id: String) -> AppResult<RedisOverview> {
+    state.get_redis(&session_id)?.overview().await
+}
+
+#[tauri::command]
+pub async fn redis_select(state: State<'_, AppState>, session_id: String, db: u32) -> AppResult<()> {
+    state.get_redis(&session_id)?.select(db).await
+}
+
+#[tauri::command]
+pub async fn redis_scan(state: State<'_, AppState>, session_id: String, pattern: String, cursor: u64) -> AppResult<ScanPage> {
+    state.get_redis(&session_id)?.scan(&pattern, cursor, 500).await
+}
+
+#[tauri::command]
+pub async fn redis_get(state: State<'_, AppState>, session_id: String, key: String) -> AppResult<RedisValue> {
+    state.get_redis(&session_id)?.get(&key).await
+}
+
+#[tauri::command]
+pub async fn redis_edit(state: State<'_, AppState>, session_id: String, edit: RedisEdit) -> AppResult<()> {
+    state.get_redis(&session_id)?.edit(edit).await
+}
+
+#[tauri::command]
+pub async fn redis_command(state: State<'_, AppState>, session_id: String, line: String, allow_write: bool) -> AppResult<String> {
+    state.get_redis(&session_id)?.command(&line, allow_write).await
 }
 
 #[tauri::command]

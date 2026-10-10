@@ -181,7 +181,8 @@ export const useApp = create<State>((set, get) => {
           activeTabId: tabs[0]?.id ?? null,
         };
         set((st) => ({ sessions: [...st.sessions, session], activeSessionId: session.id }));
-        await get().refreshTables(session.id);
+        if (c.driver !== "redis") await get().refreshTables(session.id);
+        else patchSession(session.id, () => ({ tablesLoading: false }));
       } catch (e) {
         get().toast(`Couldn't connect to ${c.name}: ${errorMessage(e)}`, "error");
       } finally {

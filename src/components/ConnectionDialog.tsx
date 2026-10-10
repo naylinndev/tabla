@@ -16,7 +16,7 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "production", label: "Production" },
 ];
 type DialogTab = "connection" | "ssh" | "ssl" | "options";
-const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0 };
+const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379 };
 
 /** Parses postgres://, mysql:// and sqlite:// URLs into form fields. */
 export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
@@ -29,9 +29,21 @@ export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
         ? "mysql"
         : /^sqlite3?$/.test(scheme)
           ? "sqlite"
-          : null;
+          : /^rediss?$/.test(scheme)
+            ? "redis"
+            : null;
     if (!driver) return null;
     if (driver === "sqlite") return { driver, database: decodeURIComponent(u.pathname), host: "", port: 0 };
+    if (driver === "redis")
+      return {
+        driver,
+        host: decodeURIComponent(u.hostname) || "localhost",
+        port: u.port ? +u.port : 6379,
+        user: decodeURIComponent(u.username) === "default" ? "" : decodeURIComponent(u.username),
+        password: u.password ? decodeURIComponent(u.password) : undefined,
+        database: u.pathname.replace(/^\//, "") || "0",
+        sslMode: scheme === "rediss" ? "require" : "disable",
+      };
     const ssl = u.searchParams.get("sslmode") ?? u.searchParams.get("ssl-mode");
     const sslMode: SslMode | undefined =
       ssl === "disable" || ssl === "DISABLED"
@@ -114,7 +126,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           : providerById(x.provider, x.driver).driver === rest.driver
             ? x.provider
             : rest.driver!,
-      name: x.name || rest.database || rest.host || "",
+      name: x.name || (rest.driver === "redis" ? rest.host : rest.database || rest.host) || "",
     }));
     if (pw !== undefined) {
       setPassword(pw);
@@ -367,7 +379,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
             </div>
             <div className="grid-2b">
               <div className="field">
-                <label>User</label>
+                <label>{f.driver === "redis" ? "User (ACL, optional)" : "User"}</label>
                 <input
                   className="input mono"
                   value={f.user}
@@ -393,7 +405,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
               </div>
             </div>
             <div className="field">
-                <label>{f.driver === "mysql" ? "Database (optional)" : "Database"}</label>
+                <label>{f.driver === "mysql" ? "Database (optional)" : f.driver === "redis" ? "Database index (0–15)" : "Database"}</label>
                 <input
                   className="input mono"
                   placeholder={provider.database ?? ""}
@@ -549,7 +561,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 ))}
               </div>
             </div>
-            {(
+            {f.driver !== "redis" && (
               [
                 ["sslCa", "CA certificate", "Server CA (.pem / .crt), for Verify with a private CA"],
                 ["sslCert", "Client certificate", "Only if your server requires client certificates"],
@@ -577,6 +589,11 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 </div>
               </div>
             ))}
+            {f.driver === "redis" && (
+              <p className="hint">
+                <Info /> Require turns on TLS (rediss://). Prefer and Disable connect without TLS. Verify also checks the certificate.
+              </p>
+            )}
             {f.ssh.enabled && f.sslMode === "verify-full" && (
               <div className="hint">
                 <Info /> With an SSH tunnel, host name verification sees 127.0.0.1. Use Require instead of Verify.
@@ -633,6 +650,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           <Switch on={f.readOnly} onChange={(v) => set("readOnly", v)} label="Read-only" />
         </div>
 
+        {f.driver !== "redis" && (
         <div className="toggle-row">
           <Bot />
           <div style={{ flex: 1 }}>
@@ -641,6 +659,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           </div>
           <Switch on={f.aiAccess} onChange={(v) => set("aiAccess", v)} label="Allow AI assistants" />
         </div>
+        )}
           </>
         )}
         <button type="submit" hidden />

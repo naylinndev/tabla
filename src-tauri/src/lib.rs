@@ -7,6 +7,7 @@ mod config;
 mod db;
 mod error;
 mod mcp;
+mod redis_db;
 mod ssh;
 mod users;
 
@@ -42,6 +43,12 @@ pub fn run() {
             commands::user_grants,
             commands::query_log,
             commands::clear_query_log,
+            commands::redis_overview,
+            commands::redis_select,
+            commands::redis_scan,
+            commands::redis_get,
+            commands::redis_edit,
+            commands::redis_command,
             commands::run_query,
             commands::apply_edits,
             commands::plan_alter,

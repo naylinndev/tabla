@@ -136,11 +136,14 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         "table_structure" => json!(
             state.get(&sid()?)?.table_structure(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
         ),
-        "query_log" => json!(state.get(&sid()?)?.log_since(arg::<u64>(&a, "after")?)),
-        "clear_query_log" => {
-            state.get(&sid()?)?.clear_log();
-            Value::Null
-        }
+        "query_log" => json!(state.log_since(&sid()?, arg::<u64>(&a, "after")?)?),
+        "clear_query_log" => json!(state.clear_log(&sid()?)?),
+        "redis_overview" => json!(state.get_redis(&sid()?)?.overview().await?),
+        "redis_select" => json!(state.get_redis(&sid()?)?.select(arg(&a, "db")?).await?),
+        "redis_scan" => json!(state.get_redis(&sid()?)?.scan(&arg::<String>(&a, "pattern")?, arg(&a, "cursor")?, 500).await?),
+        "redis_get" => json!(state.get_redis(&sid()?)?.get(&arg::<String>(&a, "key")?).await?),
+        "redis_edit" => json!(state.get_redis(&sid()?)?.edit(arg(&a, "edit")?).await?),
+        "redis_command" => json!(state.get_redis(&sid()?)?.command(&arg::<String>(&a, "line")?, arg(&a, "allowWrite")?).await?),
         "list_users" => json!(state.get(&sid()?)?.list_users().await?),
         "user_grants" => json!(state.get(&sid()?)?.user_grants(&arg::<String>(&a, "name")?, &arg::<String>(&a, "host")?).await?),
         "table_relations" => json!(

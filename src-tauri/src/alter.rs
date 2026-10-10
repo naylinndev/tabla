@@ -179,6 +179,7 @@ impl Session {
                             s.push_str(&self.mysql_extra(&req.schema, &req.table, &o.name).await?);
                             out.push(s);
                         }
+                        Driver::Redis => return Err(crate::error::not_sql()),
                         Driver::Sqlite => {
                             if o.data_type.trim() != c.data_type.trim() || o.nullable != c.nullable || default_of(o) != default_of(c) {
                                 return Err(AppError::msg(format!(

@@ -3497,3 +3497,146 @@ pre.grants {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+/* Redis */
+.rtype {
+  flex: none;
+  min-width: 44px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 5px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--c);
+  background: color-mix(in srgb, var(--c) 14%, transparent);
+}
+.sb-item.rkey .name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.rkey-bar .crumb {
+  font-size: 13.5px;
+  min-width: 0;
+}
+.ttl-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.ttl-box .input {
+  width: 96px;
+}
+.rstring {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 16px;
+  gap: 0;
+}
+.rtext {
+  flex: 1;
+  width: 100%;
+  min-height: 160px;
+  resize: none;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  outline: none;
+  user-select: text;
+}
+.rtext:focus {
+  border-color: var(--accent);
+}
+.rstring .sg-bar {
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.sg.rv .sg-row {
+  grid-template-columns: minmax(160px, 0.8fr) minmax(200px, 2fr) 40px;
+  min-width: 480px;
+  padding-left: 12px;
+}
+.sg.rv.set .sg-row {
+  grid-template-columns: minmax(200px, 1fr) 40px;
+}
+.sg.rv.list .sg-row {
+  grid-template-columns: 70px minmax(200px, 1fr) 40px;
+}
+.radd {
+  gap: 8px !important;
+  padding: 8px !important;
+}
+.radd .input {
+  flex: 1;
+}
+.rcli {
+  background: var(--bg);
+}
+.rcli-out {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  user-select: text;
+}
+.rcli-entry {
+  margin-bottom: 10px;
+}
+.rcli-cmd {
+  color: var(--text);
+  font-weight: 600;
+}
+.rcli-reply {
+  margin: 3px 0 0;
+  white-space: pre-wrap;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+.rcli-reply.err {
+  color: var(--danger);
+}
+.rcli-confirm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--warn-soft);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+.rcli-ex {
+  margin: 0 4px 4px 0;
+  cursor: pointer;
+}
+.rcli-in {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.rcli-in input {
+  flex: 1;
+  height: 32px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  user-select: text;
+}

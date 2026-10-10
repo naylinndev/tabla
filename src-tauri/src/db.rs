@@ -318,6 +318,7 @@ impl Session {
                 }
                 Pool::My(po.connect_with(o).await?)
             }
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 if cfg.database.trim().is_empty() {
                     return Err(AppError::msg("Choose a SQLite database file"));
@@ -434,6 +435,7 @@ impl Session {
         let sql = match self.driver {
             Driver::Postgres => "SHOW server_version",
             Driver::Mysql => "SELECT VERSION()",
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT sqlite_version()",
         };
         let rows = self.text_rows(sql).await?;
@@ -450,6 +452,7 @@ impl Session {
                 "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN \
                  ('information_schema','mysql','performance_schema','sys') ORDER BY SCHEMA_NAME"
             }
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT name FROM pragma_database_list ORDER BY seq",
         };
         Ok(self.text_rows(sql).await?.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect())
@@ -459,6 +462,7 @@ impl Session {
         let sql = match self.driver {
             Driver::Postgres => "SELECT current_schema()",
             Driver::Mysql => "SELECT DATABASE()",
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Ok(Some("main".into())),
         };
         Ok(self.text_rows(sql).await?.into_iter().next().and_then(|r| r.into_iter().next().flatten()))
@@ -477,6 +481,7 @@ impl Session {
                 "SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS FROM information_schema.TABLES \
                  WHERE TABLE_SCHEMA = {lit} ORDER BY TABLE_NAME"
             ),
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT name, type, NULL FROM {}.sqlite_master WHERE type IN ('table','view') \
                  AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -538,6 +543,7 @@ impl Session {
                 );
                 self.text_rows(&sql).await?.into_iter().map(|r| column_from(r, |v| v == "YES", |v| v == "PRI")).collect()
             }
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let sql = format!(
                     "SELECT name, type, \"notnull\" = 0, dflt_value, pk > 0, CASE WHEN pk > 0 THEN 'PRI' ELSE '' END, \
@@ -563,6 +569,7 @@ impl Session {
                  FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = {s} AND TABLE_NAME = {t} \
                  GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME"
             ),
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT il.name, COALESCE(m.sql, '(automatic index)'), il.\"unique\", il.origin = 'pk', 'btree', \
                  (SELECT group_concat(ii.name, ', ') FROM pragma_index_info(il.name, {s}) ii) \
@@ -662,6 +669,7 @@ impl Session {
                     ),
                 )
             }
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let one = |tbl: &str| {
                     format!(
@@ -700,6 +708,7 @@ impl Session {
                    '` FOR EACH ROW ', ACTION_STATEMENT) \
                  FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = {s} AND EVENT_OBJECT_TABLE = {t} ORDER BY ACTION_ORDER"
             ),
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT name, CASE WHEN upper(sql) LIKE '%INSTEAD OF%' THEN 'INSTEAD OF' WHEN upper(sql) LIKE '%BEFORE%' THEN 'BEFORE' ELSE 'AFTER' END, \
                  CASE WHEN upper(sql) LIKE '%INSERT%ON%' THEN 'INSERT' WHEN upper(sql) LIKE '%DELETE%ON%' THEN 'DELETE' ELSE 'UPDATE' END, \
@@ -819,6 +828,7 @@ impl Session {
                 let ddl = first(self.text_rows(&format!("SHOW CREATE TABLE {}", d.qualified(schema, table))).await?);
                 out.ddl = ddl.into_iter().nth(1).flatten();
             }
+            Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let q = d.quote_ident(schema);
                 let ddl = first(self.text_rows(&format!("SELECT sql FROM {q}.sqlite_master WHERE name = {t}")).await?);

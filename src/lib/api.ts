@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Driver = "postgres" | "mysql" | "sqlite";
+export type Driver = "postgres" | "mysql" | "sqlite" | "redis";
+/** Drivers that speak SQL (tables, queries, structure). */
+export type SqlDriver = Exclude<Driver, "redis">;
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 export type EnvTag = "" | "local" | "development" | "staging" | "production";
 
@@ -112,6 +114,48 @@ export interface TableRelations {
   triggers: TriggerInfo[];
 }
 
+export interface RedisKey {
+  key: string;
+  type: string;
+  /** ms; -1 = no expiry */
+  ttl: number;
+}
+
+export interface RedisScanPage {
+  cursor: number;
+  keys: RedisKey[];
+}
+
+export interface RedisValue {
+  type: string;
+  ttl: number;
+  length: number;
+  rows: string[][];
+  truncated: boolean;
+}
+
+export interface RedisOverview {
+  version: string;
+  mode: string;
+  usedMemory: string;
+  databases: { index: number; keys: number }[];
+}
+
+export type RedisEdit =
+  | { op: "setString"; key: string; value: string }
+  | { op: "hashSet"; key: string; field: string; value: string }
+  | { op: "hashDel"; key: string; field: string }
+  | { op: "listSet"; key: string; index: number; value: string }
+  | { op: "listPush"; key: string; value: string }
+  | { op: "listRemove"; key: string; value: string }
+  | { op: "setAdd"; key: string; member: string }
+  | { op: "setRemove"; key: string; member: string }
+  | { op: "zAdd"; key: string; member: string; score: number }
+  | { op: "zRemove"; key: string; member: string }
+  | { op: "delete"; keys: string[] }
+  | { op: "expire"; key: string; seconds: number | null }
+  | { op: "rename"; key: string; to: string };
+
 export interface UserInfo {
   name: string;
   host: string;
@@ -205,6 +249,12 @@ export const api = {
   listTables: (sessionId: string, schema: string) => invoke<TableInfo[]>("list_tables", { sessionId, schema }),
   tableStructure: (sessionId: string, schema: string, table: string) =>
     invoke<TableStructure>("table_structure", { sessionId, schema, table }),
+  redisOverview: (sessionId: string) => invoke<RedisOverview>("redis_overview", { sessionId }),
+  redisSelect: (sessionId: string, db: number) => invoke<void>("redis_select", { sessionId, db }),
+  redisScan: (sessionId: string, pattern: string, cursor: number) => invoke<RedisScanPage>("redis_scan", { sessionId, pattern, cursor }),
+  redisGet: (sessionId: string, key: string) => invoke<RedisValue>("redis_get", { sessionId, key }),
+  redisEdit: (sessionId: string, edit: RedisEdit) => invoke<void>("redis_edit", { sessionId, edit }),
+  redisCommand: (sessionId: string, line: string, allowWrite: boolean) => invoke<string>("redis_command", { sessionId, line, allowWrite }),
   listUsers: (sessionId: string) => invoke<UserInfo[]>("list_users", { sessionId }),
   userGrants: (sessionId: string, name: string, host: string) => invoke<string[]>("user_grants", { sessionId, name, host }),
   tableRelations: (sessionId: string, schema: string, table: string) =>

@@ -4,6 +4,12 @@
 
 **A fast, free and open-source database client for macOS, Windows and Linux.**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-7c6cff.svg)](LICENSE)
+[![CI](https://github.com/naylinndev/tabla/actions/workflows/ci.yml/badge.svg)](https://github.com/naylinndev/tabla/actions/workflows/ci.yml)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-555.svg)](#install)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://tauri.app)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e.svg)](#contributing)
+
 Browse, edit and query PostgreSQL, MySQL, MariaDB, SQLite and popular hosted
 databases from one native app, with no paywall, no tab limits and no telemetry.
 
@@ -65,12 +71,13 @@ Maintainers: release and tap setup is described in [packaging/homebrew](packagin
 | MySQL 5.7+ / 8.x | Supported | |
 | MariaDB | Supported | Uses the MySQL driver |
 | SQLite 3 | Supported | Opens local files; read-only option |
+| Redis / Valkey / KeyDB | Supported | Key browser, typed editors, CLI; Upstash and Redis Cloud presets |
 | CockroachDB | Supported | PostgreSQL wire protocol |
 | YugabyteDB (YSQL) | Supported | PostgreSQL wire protocol |
 | Supabase · Neon · Timescale · Amazon RDS / Aurora | Supported | Hosted PostgreSQL / MySQL |
 | PlanetScale · TiDB Cloud | Supported | Hosted MySQL protocol |
 | Amazon Redshift | Beta | Browsing and queries |
-| SQL Server · Redis · MongoDB · ClickHouse · DuckDB · Oracle | Planned | See [Roadmap](#roadmap) |
+| SQL Server · MongoDB · ClickHouse · DuckDB · Oracle | Planned | See [Roadmap](#roadmap) |
 
 Every connection can go through an **SSH tunnel**, for databases on a VPS or
 behind a bastion host, and can use **TLS client certificates**.
@@ -219,7 +226,7 @@ src-tauri/            Rust backend
 
 ## Roadmap
 
-- [ ] SQL Server, Redis, MongoDB, ClickHouse, DuckDB, Oracle
+- [ ] SQL Server, MongoDB, ClickHouse, DuckDB, Oracle
 - [ ] Create tables, indexes and foreign keys visually; DDL view
 - [ ] Import CSV
 - [ ] Query cancellation and streaming large results
@@ -235,4 +242,8 @@ and real database dumps out of commits, issues and screenshots.
 
 ## License
 
-[MIT](LICENSE) © Tabla contributors
+Tabla is free and open-source software, released under the **[MIT License](LICENSE)**.
+You can use, modify and distribute it, including commercially, as long as the
+copyright notice is kept.
+
+Copyright © 2026 Tabla contributors

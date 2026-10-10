@@ -5,6 +5,7 @@ import { Rail, Workspace } from "./components/Workspace";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { AiConnect } from "./components/AiConnect";
+import { RedisWorkspace } from "./components/RedisWorkspace";
 import { Toasts, isMac } from "./components/ui";
 
 function useTheme() {
@@ -76,9 +77,13 @@ export default function App() {
     <div className="shell" onContextMenu={(e) => e.preventDefault()}>
       <Rail />
       {activeId === null && <Home />}
-      {sessions.map((s) => (
-        <Workspace key={s.id} session={s} visible={s.id === activeId} />
-      ))}
+      {sessions.map((s) =>
+        s.connection.driver === "redis" ? (
+          <RedisWorkspace key={s.id} session={s} visible={s.id === activeId} />
+        ) : (
+          <Workspace key={s.id} session={s} visible={s.id === activeId} />
+        ),
+      )}
       {editing && <ConnectionDialog key={editing.id} initial={editing} />}
       <CommandPalette />
       <AiConnect />
