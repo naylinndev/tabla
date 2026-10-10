@@ -36,12 +36,14 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo test --lib 2>&1 | tee test.log
+          CARGO_TERM_COLOR=never cargo test --lib 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             # Surface the failure as annotations so it is readable without opening the log.
-            grep -E "^error(\[|:)|panicked at|^test .* FAILED|could not compile|^  --> " test.log | head -40 | while IFS= read -r line; do
+            sed -E 's/\x1b\[[0-9;]*m//g' test.log > clean.log
+            grep -E "error(\[|:)|panicked at|FAILED|could not compile|-->" clean.log | head -30 | while IFS= read -r line; do
               echo "::error title=cargo test::${line}"
             done
+            echo "::error title=cargo test (tail)::$(tail -25 clean.log | tr '\n' '|' | cut -c1-3500)"
           fi
           exit "$status"
