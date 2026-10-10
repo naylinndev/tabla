@@ -12,7 +12,8 @@ export type TableTab = {
   initialFilter?: { column: string; value: string | null };
 };
 export type QueryTab = { id: string; kind: "query"; title: string; sql: string };
-export type Tab = TableTab | QueryTab;
+export type UsersTab = { id: string; kind: "users"; title: string };
+export type Tab = TableTab | QueryTab | UsersTab;
 
 export interface Session {
   id: string;
@@ -58,6 +59,7 @@ interface State {
   setColumns(sessionId: string, table: string, cols: string[]): void;
   openTable(sessionId: string, schema: string, table: string, view?: TableView, forceNew?: boolean, initialFilter?: TableTab["initialFilter"]): void;
   newQuery(sessionId: string, sql?: string): void;
+  openUsers(sessionId: string): void;
   updateTab(sessionId: string, tabId: string, patch: Partial<Tab>): void;
   closeTab(sessionId: string, tabId: string): void;
   setActiveTab(sessionId: string, tabId: string): void;
@@ -254,6 +256,15 @@ export const useApp = create<State>((set, get) => {
       if (!s) return;
       const n = s.tabs.filter((t) => t.kind === "query").length + 1;
       const tab: QueryTab = { id: uid(), kind: "query", title: `Query ${n}`, sql };
+      patchSession(sessionId, (s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
+    },
+
+    openUsers(sessionId) {
+      const s = get().sessions.find((x) => x.id === sessionId);
+      if (!s) return;
+      const found = s.tabs.find((t) => t.kind === "users");
+      if (found) return patchSession(sessionId, () => ({ activeTabId: found.id }));
+      const tab: UsersTab = { id: uid(), kind: "users", title: "Users" };
       patchSession(sessionId, (s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
     },
 

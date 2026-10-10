@@ -112,6 +112,18 @@ export interface TableRelations {
   triggers: TriggerInfo[];
 }
 
+export interface UserInfo {
+  name: string;
+  host: string;
+  canLogin: boolean;
+  superuser: boolean;
+  createDb: boolean;
+  createRole: boolean;
+  locked: boolean;
+  validUntil: string | null;
+  memberOf: string[];
+}
+
 export interface TableDetails {
   rowsEstimate: number | null;
   totalBytes: number | null;
@@ -193,6 +205,8 @@ export const api = {
   listTables: (sessionId: string, schema: string) => invoke<TableInfo[]>("list_tables", { sessionId, schema }),
   tableStructure: (sessionId: string, schema: string, table: string) =>
     invoke<TableStructure>("table_structure", { sessionId, schema, table }),
+  listUsers: (sessionId: string) => invoke<UserInfo[]>("list_users", { sessionId }),
+  userGrants: (sessionId: string, name: string, host: string) => invoke<string[]>("user_grants", { sessionId, name, host }),
   tableRelations: (sessionId: string, schema: string, table: string) =>
     invoke<TableRelations>("table_relations", { sessionId, schema, table }),
   tableDetails: (sessionId: string, schema: string, table: string) =>

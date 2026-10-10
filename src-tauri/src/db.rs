@@ -344,7 +344,7 @@ impl Session {
     pub fn record(&self, sql: &str, started: std::time::Instant, outcome: Result<String, String>) {
         let mut log = self.log.lock().unwrap();
         let id = log.back().map(|e| e.id + 1).unwrap_or(1);
-        let mut text = sql.trim().to_string();
+        let mut text = redact_secrets(sql.trim());
         if text.len() > LOG_SQL_MAX {
             let cut = (0..=LOG_SQL_MAX).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
             text.truncate(cut);
@@ -1149,6 +1149,51 @@ async fn collect<Q, R: Row>(
     Ok(sets)
 }
 
+/// Masks the literal after PASSWORD / IDENTIFIED BY so account changes never
+/// leave a password in the Console log.
+pub fn redact_secrets(sql: &str) -> String {
+    let lower = sql.to_ascii_lowercase();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    while i < sql.len() {
+        let hit = ["password ", "identified by "]
+            .iter()
+            .filter_map(|k| lower[i..].find(k).map(|p| (p, k.len())))
+            .min_by_key(|(p, _)| *p);
+        let Some((p, klen)) = hit else {
+            out.push_str(&sql[i..]);
+            break;
+        };
+        let after = i + p + klen;
+        out.push_str(&sql[i..after]);
+        let rest = &sql[after..];
+        let trimmed = rest.trim_start();
+        let ws = rest.len() - trimmed.len();
+        if let Some(body) = trimmed.strip_prefix('\'') {
+            // Find the closing quote, honoring '' and \' escapes.
+            let b = body.as_bytes();
+            let mut j = 0;
+            while j < b.len() {
+                if b[j] == b'\\' {
+                    j += 2;
+                } else if b[j] == b'\'' && b.get(j + 1) == Some(&b'\'') {
+                    j += 2;
+                } else if b[j] == b'\'' {
+                    break;
+                } else {
+                    j += 1;
+                }
+            }
+            out.push_str(&rest[..ws]);
+            out.push_str("'•••'");
+            i = after + ws + 1 + (j + 1).min(body.len());
+        } else {
+            i = after;
+        }
+    }
+    out
+}
+
 fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(2 + bytes.len().min(MAX_BINARY_PREVIEW) * 2);
     s.push_str("0x");
@@ -1364,6 +1409,18 @@ mod tests {
         let s = Session::connect(&cfg, None).await.unwrap();
         assert!(s.apply_edits("main", "notes", vec![RowEdit::Insert { values: vec![] }]).await.is_err());
         assert!(s.run_script("DELETE FROM notes", 10).await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::redact_secrets;
+
+    #[test]
+    fn masks_passwords() {
+        assert_eq!(redact_secrets("CREATE ROLE a LOGIN PASSWORD 'se''cr;et' VALID UNTIL 'x'"), "CREATE ROLE a LOGIN PASSWORD '•••' VALID UNTIL 'x'");
+        assert_eq!(redact_secrets("ALTER USER 'u'@'%' IDENTIFIED BY 'p\\'w'; SELECT 1"), "ALTER USER 'u'@'%' IDENTIFIED BY '•••'; SELECT 1");
+        assert_eq!(redact_secrets("SELECT password FROM t"), "SELECT password FROM t");
     }
 }
 

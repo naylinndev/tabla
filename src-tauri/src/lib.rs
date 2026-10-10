@@ -8,6 +8,7 @@ mod db;
 mod error;
 mod mcp;
 mod ssh;
+mod users;
 
 pub fn run_mcp() {
     mcp::run();
@@ -37,6 +38,8 @@ pub fn run() {
             commands::fetch_rows,
             commands::table_details,
             commands::table_relations,
+            commands::list_users,
+            commands::user_grants,
             commands::query_log,
             commands::clear_query_log,
             commands::run_query,

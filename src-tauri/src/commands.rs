@@ -14,6 +14,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::{
     alter::AlterRequest,
+    users::UserInfo,
     config::{self, ConnectionConfig},
     db::{FetchArgs, LogEntry, TableRelations, ResultSet, RowEdit, Session, TableDetails, TableInfo, TablePage, TableStructure},
     error::{AppError, AppResult},
@@ -242,6 +243,16 @@ pub fn query_log(state: State<'_, AppState>, session_id: String, after: u64) -> 
 pub fn clear_query_log(state: State<'_, AppState>, session_id: String) -> AppResult<()> {
     state.get(&session_id)?.clear_log();
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_users(state: State<'_, AppState>, session_id: String) -> AppResult<Vec<UserInfo>> {
+    state.get(&session_id)?.list_users().await
+}
+
+#[tauri::command]
+pub async fn user_grants(state: State<'_, AppState>, session_id: String, name: String, host: String) -> AppResult<Vec<String>> {
+    state.get(&session_id)?.user_grants(&name, &host).await
 }
 
 #[tauri::command]

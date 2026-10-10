@@ -3414,3 +3414,86 @@ html:not(.mac) .titlebar-space {
 .view-switch button {
   padding: 0 10px;
 }
+
+/* Users & privileges */
+.users-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.users-list {
+  width: 280px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elev);
+  min-height: 0;
+}
+.users-list-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 14px 14px 10px;
+  font-size: 13px;
+}
+.users-items {
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px 8px;
+}
+.users-items .sb-item .name .dim {
+  font-size: 12px;
+}
+.users-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.users-detail-head {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.users-detail-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.users-detail-head h2 .dim {
+  font-weight: 400;
+}
+.users-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+.users-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 760px;
+}
+.users-attrs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.users-attrs .checkbox {
+  font-size: 13px;
+}
+.grant-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+pre.grants {
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+}

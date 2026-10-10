@@ -17,6 +17,7 @@ import {
   SunMoon,
   Table2,
   TerminalSquare,
+  Users as UsersIcon,
   X,
 } from "lucide-react";
 import { local, newConnection, useApp, type Session, type Tab } from "../lib/store";
@@ -25,6 +26,7 @@ import { schemaPrompt } from "../lib/ai";
 import { Kbd, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
+import { UsersView } from "./UsersView";
 import { Select } from "./controls";
 import { TableView } from "./TableView";
 import { QueryView } from "./QueryView";
@@ -271,6 +273,11 @@ export function Sidebar({ session }: { session: Session }) {
         <button className="btn" onClick={() => newQuery(session.id)}>
           <Code2 /> New query <Kbd keys="Mod T" />
         </button>
+        {c.driver !== "sqlite" && (
+          <button className="icon-btn" style={{ width: 32, height: 32 }} title="Users & privileges" onClick={() => useApp.getState().openUsers(session.id)}>
+            <UsersIcon />
+          </button>
+        )}
         <button className="icon-btn" style={{ width: 32, height: 32 }} title="Copy schema as an AI prompt" onClick={copySchema} disabled={copying}>
           {copying ? <span className="spinner" /> : <Sparkles />}
         </button>
@@ -324,7 +331,7 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
                 }}
                 title={t.kind === "table" ? `${t.schema}.${t.table}` : t.title}
               >
-                {t.kind === "table" ? <Table2 /> : <FileCode2 />}
+                {t.kind === "table" ? <Table2 /> : t.kind === "users" ? <UsersIcon /> : <FileCode2 />}
                 <span className="title">{tabTitle(t)}</span>
                 <button
                   className="close"
@@ -350,6 +357,8 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
         {session.tabs.map((t) =>
           t.kind === "table" ? (
             <TableView key={t.id} session={session} tab={t} active={visible && t.id === session.activeTabId} />
+          ) : t.kind === "users" ? (
+            <UsersView key={t.id} session={session} active={visible && t.id === session.activeTabId} />
           ) : (
             <QueryView key={t.id} session={session} tab={t} active={visible && t.id === session.activeTabId} />
           ),

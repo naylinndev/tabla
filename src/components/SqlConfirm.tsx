@@ -10,6 +10,7 @@ export function SqlConfirm({
   title,
   description,
   statements,
+  displayStatements,
   danger,
   confirmLabel = "Run",
   children,
@@ -20,6 +21,8 @@ export function SqlConfirm({
   title: string;
   description?: ReactNode;
   statements: string[];
+  /** What to show instead of `statements` (e.g. with passwords masked). */
+  displayStatements?: string[];
   danger?: boolean;
   confirmLabel?: string;
   children?: ReactNode;
@@ -63,11 +66,11 @@ export function SqlConfirm({
         <div className="code-block">
           <div className="code-head">
             <span>SQL</span>
-            <button className="btn ghost" onClick={() => navigator.clipboard.writeText(statements.join(";\n") + ";")}>
+            <button className="btn ghost" onClick={() => navigator.clipboard.writeText((displayStatements ?? statements).join(";\n") + ";")}>
               Copy
             </button>
           </div>
-          <pre>{statements.map((s) => s + ";").join("\n")}</pre>
+          <pre>{(displayStatements ?? statements).map((s) => s + ";").join("\n")}</pre>
         </div>
         {error && (
           <div className="q-error" style={{ margin: 0 }}>
