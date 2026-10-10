@@ -63,6 +63,7 @@ pub fn run() {
             commands::apply_alter,
             commands::pick_sqlite_file,
             commands::pick_file,
+            commands::pick_csv_file,
             commands::export_file,
             commands::scan_env_files,
             commands::mcp_command,

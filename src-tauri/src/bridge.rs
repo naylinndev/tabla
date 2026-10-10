@@ -162,6 +162,10 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         ),
         "plan_alter" => json!(state.get(&sid()?)?.plan_alter(&arg(&a, "req")?).await?),
         "apply_alter" => json!(state.get(&sid()?)?.apply_alter(&arg(&a, "req")?).await?),
+        "pick_csv_file" => match env_path("TABLA_BRIDGE_CSV") {
+            Some(p) => json!(commands::read_text_file(&p)?),
+            None => Value::Null,
+        },
         "pick_file" => json!(env_path("TABLA_BRIDGE_PICK").map(|p| p.to_string_lossy().into_owned())),
         "pick_sqlite_file" => json!(env_path("TABLA_BRIDGE_SQLITE").map(|p| p.to_string_lossy().into_owned())),
         "export_file" => {

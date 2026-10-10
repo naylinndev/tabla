@@ -267,6 +267,7 @@ export const api = {
     invoke<number>("apply_edits", { sessionId, schema, table, edits }),
   planAlter: (sessionId: string, req: AlterRequest) => invoke<string[]>("plan_alter", { sessionId, req }),
   applyAlter: (sessionId: string, req: AlterRequest) => invoke<string[]>("apply_alter", { sessionId, req }),
+  pickCsvFile: () => invoke<{ name: string; contents: string } | null>("pick_csv_file"),
   pickSqliteFile: () => invoke<string | null>("pick_sqlite_file"),
   pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>

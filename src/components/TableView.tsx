@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -22,6 +22,10 @@ import {
   Info as InfoIcon,
   GitFork,
   Zap,
+  FileUp,
+  Columns3,
+  Search,
+  CopyPlus,
   X,
   Ban,
   Code2,
@@ -32,6 +36,7 @@ import { useApp, local, type Session, type TableTab } from "../lib/store";
 import { buildFilter, FILTER_OPS, opTakesValue, toCSV, toJSON, type Filter, type FilterOp } from "../lib/sql";
 import { DataGrid, type Cursor, type GridColumn } from "./DataGrid";
 import { StructureEditor } from "./StructureEditor";
+import { ImportCsv } from "./ImportCsv";
 import { TableInfoView } from "./TableInfoView";
 import { RelationsView, TriggersView, useRelations } from "./RelationsViews";
 import { Checkbox, Select } from "./controls";
@@ -55,6 +60,14 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
   const [structureRev, setStructureRev] = useState(0);
   const orderKey = `tabla.colorder.${conn.id}.${tab.schema}.${tab.table}`;
   const [columnOrder, setColumnOrder] = useState<string[]>(() => local.get(orderKey, []));
+  const hideKey = `tabla.colhide.${conn.id}.${tab.schema}.${tab.table}`;
+  const [hidden, setHidden] = useState<string[]>(() => local.get(hideKey, []));
+  const saveHidden = (names: string[]) => {
+    local.set(hideKey, names);
+    setHidden(names);
+  };
+  const [colsOpen, setColsOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
   const saveOrder = (names: string[]) => {
     local.set(orderKey, names);
     setColumnOrder(names);
@@ -223,6 +236,24 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
     setCursor({ row: r, col: 0 });
   };
 
+  /** Copies rows as new pending inserts, leaving keys and auto-generated columns to the database. */
+  const duplicateRows = (rs: number[]) => {
+    if (!editable || !rs.length) return;
+    const auto = new Set(
+      structure?.columns.filter((c) => c.primaryKey || /auto|identity|generated/i.test(c.extra) || /nextval\(/i.test(c.defaultValue ?? "")).map((c) => c.name),
+    );
+    const copies = rs.map((r) => {
+      const nr: Record<string, string | null> = {};
+      columns.forEach((c, i) => {
+        if (!auto.has(c.name)) nr[c.name] = getCell(r, i) ?? null;
+      });
+      return nr;
+    });
+    setInserted((ins) => [...ins, ...copies]);
+    setSelected(new Set());
+    toast(`Duplicated ${copies.length} row${copies.length > 1 ? "s" : ""}. Commit to save.`, "info");
+  };
+
   const discard = () => {
     setEdits({});
     setDeleted(new Set());
@@ -302,6 +333,9 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
       } else if (k === "i") {
         e.preventDefault();
         toggleInspector();
+      } else if (k === "d" && tab.view === "data") {
+        e.preventDefault();
+        duplicateRows(selected.size ? [...selected] : cursor ? [cursor.row] : []);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -374,6 +408,12 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
             }),
         });
       items.push({
+        label: selected.size > 1 ? `Duplicate ${selected.size} rows` : "Duplicate row",
+        icon: <CopyPlus />,
+        kbd: "Mod D",
+        onClick: () => duplicateRows(selected.size ? [...selected] : [r]),
+      });
+      items.push({
         label: deleted.has(r) ? "Restore row" : "Delete row",
         icon: deleted.has(r) ? <RotateCcw /> : <Trash2 />,
         danger: !deleted.has(r),
@@ -430,6 +470,24 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
                 <Plus /> <span className="lbl">Row</span>
               </button>
             )}
+            {editable && (
+              <button className="icon-btn" onClick={() => setImporting(true)} title="Import CSV into this table" disabled={busy}>
+                <FileUp />
+              </button>
+            )}
+            <div style={{ position: "relative" }}>
+              <button className={`icon-btn ${hidden.length ? "on" : ""}`} onClick={() => setColsOpen(!colsOpen)} title="Show or hide columns">
+                <Columns3 />
+              </button>
+              {colsOpen && (
+                <ColumnPicker
+                  columns={columns.map((c) => c.name)}
+                  hidden={hidden}
+                  onChange={saveHidden}
+                  onClose={() => setColsOpen(false)}
+                />
+              )}
+            </div>
             <button className="icon-btn" onClick={() => exportAs("csv")} title="Export page as CSV" disabled={!rows.length}>
               <Download />
             </button>
@@ -641,6 +699,7 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
                 loading={loading}
                 emptyText={applied ? "No rows match this filter" : "This table is empty"}
                 columnOrder={columnOrder}
+                hiddenColumns={hidden}
                 onReorder={saveOrder}
                 linkColumns={fkByColumn.size ? new Set(columns.map((c, i) => (fkByColumn.has(c.name) ? i : -1)).filter((i) => i >= 0)) : undefined}
                 onFollow={(r, c) => {
@@ -704,6 +763,9 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
         )}
       </div>
 
+      {importing && structure && (
+        <ImportCsv session={session} schema={tab.schema} table={tab.table} columns={structure.columns} onClose={() => setImporting(false)} onDone={() => load()} />
+      )}
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.row, menu.col)} onClose={() => setMenu(null)} />}
 
       {confirmProd && (
@@ -857,6 +919,40 @@ function InspectorField({
           onCommit(out);
         }}
       />
+    </div>
+  );
+}
+
+function ColumnPicker({ columns, hidden, onChange, onClose }: { columns: string[]; hidden: string[]; onChange(h: string[]): void; onClose(): void }) {
+  const [q, setQ] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    window.addEventListener("mousedown", down);
+    return () => window.removeEventListener("mousedown", down);
+  }, [onClose]);
+  const shown = columns.filter((c) => c.toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div ref={ref} className="popover col-picker">
+      <div className="sb-search" style={{ margin: 8 }}>
+        <Search />
+        <input className="input" autoFocus placeholder="Filter columns" value={q} onChange={(e) => setQ(e.target.value)} spellCheck={false} />
+      </div>
+      <div className="col-list">
+        {shown.map((c) => (
+          <div key={c} className="col-item">
+            <Checkbox checked={!hidden.includes(c)} onChange={(v) => onChange(v ? hidden.filter((h) => h !== c) : [...hidden, c])} label={<span className="mono">{c}</span>} />
+          </div>
+        ))}
+      </div>
+      <div className="col-foot">
+        <button className="btn ghost" onClick={() => onChange([])}>
+          Show all
+        </button>
+        <span className="dim">
+          {columns.length - hidden.length} of {columns.length}
+        </span>
+      </div>
     </div>
   );
 }

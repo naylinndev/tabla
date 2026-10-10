@@ -184,3 +184,40 @@ export function resultSummary(r: ResultSet): string {
   if (r.columns.length) return `${r.rows.length.toLocaleString()} row${r.rows.length === 1 ? "" : "s"}`;
   return `${r.rowsAffected.toLocaleString()} affected`;
 }
+
+/** RFC 4180 CSV parsing with quoted fields; the delimiter is auto-detected. */
+export function parseCSV(text: string, delimiter?: string): { rows: string[][]; delimiter: string } {
+  const firstLine = text.slice(0, text.indexOf("\n") === -1 ? text.length : text.indexOf("\n"));
+  const d =
+    delimiter ??
+    [",", "\t", ";", "|"].map((c) => [c, firstLine.split(c).length] as const).sort((a, b) => b[1] - a[1])[0][0];
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (c === '"') quoted = false;
+      else field += c;
+    } else if (c === '"' && field === "") quoted = true;
+    else if (c === d) {
+      row.push(field);
+      field = "";
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(field);
+      field = "";
+      if (row.length > 1 || row[0] !== "") rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field !== "" || row.length) {
+    row.push(field);
+    rows.push(row);
+  }
+  return { rows, delimiter: d };
+}

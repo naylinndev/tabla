@@ -37,6 +37,8 @@ interface Props {
   onCopied?(what: string): void;
   /** Display order by column name (drag headers to change it). */
   columnOrder?: string[];
+  /** Column names to leave out of the view. */
+  hiddenColumns?: string[];
   onReorder?(names: string[]): void;
   /** Foreign-key columns: cells get an arrow that opens the referenced row. */
   linkColumns?: Set<number>;
@@ -95,12 +97,13 @@ export const DataGrid = memo(function DataGrid(p: Props) {
   // Display position -> original column index.
   const order = useMemo(() => {
     const all = p.columns.map((_, i) => i);
-    if (!p.columnOrder?.length) return all;
     const byName = new Map(p.columns.map((c, i) => [c.name, i]));
-    const picked = p.columnOrder.map((n) => byName.get(n)).filter((i): i is number => i !== undefined);
-    return [...picked, ...all.filter((i) => !picked.includes(i))];
+    const picked = (p.columnOrder ?? []).map((n) => byName.get(n)).filter((i): i is number => i !== undefined);
+    const ordered = [...picked, ...all.filter((i) => !picked.includes(i))];
+    const hide = new Set(p.hiddenColumns ?? []);
+    return ordered.filter((i) => !hide.has(p.columns[i].name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [p.columnOrder, colKey]);
+  }, [p.columnOrder, p.hiddenColumns, colKey]);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropAt, setDropAt] = useState<number | null>(null);
 
@@ -291,7 +294,8 @@ export const DataGrid = memo(function DataGrid(p: Props) {
                       const next = [...order];
                       const [moved] = next.splice(dragFrom, 1);
                       next.splice(di, 0, moved);
-                      p.onReorder?.(next.map((i) => p.columns[i].name));
+                      const hiddenNames = p.columns.filter((c) => (p.hiddenColumns ?? []).includes(c.name)).map((c) => c.name);
+                      p.onReorder?.([...next.map((i) => p.columns[i].name), ...hiddenNames]);
                     }
                     setDragFrom(null);
                     setDropAt(null);

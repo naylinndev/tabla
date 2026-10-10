@@ -404,6 +404,44 @@ pub async fn pick_sqlite_file(app: AppHandle) -> AppResult<Option<String>> {
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedText {
+    name: String,
+    contents: String,
+}
+
+const MAX_IMPORT_BYTES: u64 = 100 * 1024 * 1024;
+
+pub fn read_text_file(path: &Path) -> AppResult<PickedText> {
+    let size = std::fs::metadata(path)?.len();
+    if size > MAX_IMPORT_BYTES {
+        return Err(AppError::msg("That file is larger than 100 MB. Split it, or import it with the database's own tools."));
+    }
+    let bytes = std::fs::read(path)?;
+    // Accept UTF-8 (with or without BOM); fall back to lossy decoding.
+    let text = String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+    Ok(PickedText {
+        name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        contents: text.trim_start_matches('\u{feff}').to_string(),
+    })
+}
+
+/// Native picker for CSV imports; the web layer only receives the chosen file's text.
+#[tauri::command]
+pub async fn pick_csv_file(app: AppHandle) -> AppResult<Option<PickedText>> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("CSV / TSV", &["csv", "tsv", "txt"])
+        .add_filter("All files", &["*"])
+        .blocking_pick_file();
+    match picked.and_then(|p| p.into_path().ok()) {
+        Some(path) => read_text_file(&path).map(Some),
+        None => Ok(None),
+    }
+}
+
 /// Native picker for SSH keys and TLS certificates. Returns only the path;
 /// Tabla never copies or stores the file's contents.
 #[tauri::command]
