@@ -1,0 +1,52 @@
+# ── Dependencies & build output ───────────────────────────
+node_modules/
+dist/
+dist-ssr/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# ── Secrets: never commit these ───────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.p8
+*.cer
+*.mobileprovision
+*.keystore
+*.secret
+secrets/
+
+# ── Local databases (test data can contain real records) ──
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.duckdb
+
+# ── Local AI-assistant and personal notes/config ──────────
+.claude/
+CLAUDE.local.md
+*.local.md
+notes/
+.scratch/
+
+# ── Editors & OS ──────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.sw?
+
+# ── Logs ──────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+*.local
