@@ -112,6 +112,22 @@ export type RowEdit =
   | { kind: "insert"; values: CellValue[] }
   | { kind: "delete"; key: CellValue[] };
 
+export interface AlterColumn {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  /** Raw SQL expression; null = no default. */
+  defaultValue: string | null;
+}
+
+export interface AlterRequest {
+  schema: string;
+  table: string;
+  changes: { original: AlterColumn | null; column: AlterColumn | null }[];
+  /** Physical order (MySQL only); empty = unchanged. */
+  order: string[];
+}
+
 export interface FetchArgs {
   schema: string;
   table: string;
@@ -136,6 +152,8 @@ export const api = {
   runQuery: (sessionId: string, sql: string) => invoke<QueryOutcome>("run_query", { sessionId, sql }),
   applyEdits: (sessionId: string, schema: string, table: string, edits: RowEdit[]) =>
     invoke<number>("apply_edits", { sessionId, schema, table, edits }),
+  planAlter: (sessionId: string, req: AlterRequest) => invoke<string[]>("plan_alter", { sessionId, req }),
+  applyAlter: (sessionId: string, req: AlterRequest) => invoke<string[]>("apply_alter", { sessionId, req }),
   pickSqliteFile: () => invoke<string | null>("pick_sqlite_file"),
   pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>

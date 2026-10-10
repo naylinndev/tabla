@@ -28,6 +28,7 @@ import { api, errorMessage, type RowEdit, type TablePage, type TableStructure } 
 import { useApp, local, type Session, type TableTab } from "../lib/store";
 import { buildFilter, FILTER_OPS, opTakesValue, toCSV, toJSON, type Filter, type FilterOp } from "../lib/sql";
 import { DataGrid, type Cursor, type GridColumn } from "./DataGrid";
+import { StructureEditor } from "./StructureEditor";
 import { ContextMenu, Kbd, Modal, type MenuItem } from "./ui";
 
 type Edits = Record<number, Record<string, string | null>>;
@@ -45,6 +46,13 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
   const isView = tableInfo ? tableInfo.kind !== "table" : false;
 
   const [structure, setStructure] = useState<TableStructure | null>(null);
+  const [structureRev, setStructureRev] = useState(0);
+  const orderKey = `tabla.colorder.${conn.id}.${tab.schema}.${tab.table}`;
+  const [columnOrder, setColumnOrder] = useState<string[]>(() => local.get(orderKey, []));
+  const saveOrder = (names: string[]) => {
+    local.set(orderKey, names);
+    setColumnOrder(names);
+  };
   const [page, setPage] = useState<TablePage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +138,7 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
         setColumns(session.id, tab.table, s.columns.map((c) => c.name));
       })
       .catch((e) => toast(errorMessage(e), "error"));
-  }, [session.id, tab.schema, tab.table, setColumns, toast]);
+  }, [session.id, tab.schema, tab.table, setColumns, toast, structureRev]);
 
   // ── cell access ─────────────────────────────────────────────
   const colName = (c: number) => columns[c]?.name;
@@ -550,7 +558,20 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
       )}
 
       {tab.view === "structure" ? (
-        <StructurePanel structure={structure} onQuery={(sql) => newQuery(session.id, sql)} />
+        <StructureEditor
+          session={session}
+          schema={tab.schema}
+          table={tab.table}
+          structure={structure}
+          editable={!conn.readOnly && !isView}
+          viewOrder={columnOrder}
+          onViewOrder={saveOrder}
+          onApplied={() => {
+            setStructureRev((n) => n + 1);
+            load();
+          }}
+          onQuery={(sql) => newQuery(session.id, sql)}
+        />
       ) : (
         <div className="split-h">
           <div className="grid-wrap">
@@ -583,6 +604,8 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
                 onDeleteRows={editable ? deleteRows : undefined}
                 loading={loading}
                 emptyText={applied ? "No rows match this filter" : "This table is empty"}
+                columnOrder={columnOrder}
+                onReorder={saveOrder}
                 onCopied={(w) => toast(`Copied ${w}`, "success")}
               />
             )}
@@ -792,77 +815,6 @@ function InspectorField({
           onCommit(out);
         }}
       />
-    </div>
-  );
-}
-
-function StructurePanel({ structure, onQuery }: { structure: TableStructure | null; onQuery(sql: string): void }) {
-  if (!structure)
-    return (
-      <div className="q-message">
-        <span className="spinner" />
-      </div>
-    );
-  return (
-    <div className="structure">
-      <h3>Columns · {structure.columns.length}</h3>
-      <table className="s-table">
-        <thead>
-          <tr>
-            <th style={{ width: 28 }} />
-            <th>Name</th>
-            <th>Type</th>
-            <th>Nullable</th>
-            <th>Default</th>
-          </tr>
-        </thead>
-        <tbody>
-          {structure.columns.map((c) => (
-            <tr key={c.name}>
-              <td>{c.primaryKey && <KeyRound className="pk-ico" />}</td>
-              <td className="mono" style={{ fontWeight: 600 }}>
-                {c.name}
-              </td>
-              <td className="mono muted">{c.dataType}</td>
-              <td>{c.nullable ? <span className="badge">null</span> : <span className="badge local">not null</span>}</td>
-              <td className="mono dim">{c.defaultValue ?? ""}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <h3>Indexes · {structure.indexes.length}</h3>
-      {structure.indexes.length ? (
-        <table className="s-table">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Definition</th>
-            </tr>
-          </thead>
-          <tbody>
-            {structure.indexes.map((i) => (
-              <tr key={i.name}>
-                <td className="mono" style={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                  {i.name}
-                </td>
-                <td className="mono muted">
-                  {i.definition}
-                  <button
-                    className="icon-btn"
-                    style={{ width: 20, height: 20, marginLeft: 6, verticalAlign: "middle" }}
-                    title="Open in query editor"
-                    onClick={() => onQuery(i.definition)}
-                  >
-                    <Code2 size={12} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      ) : (
-        <p className="dim">No indexes.</p>
-      )}
     </div>
   );
 }

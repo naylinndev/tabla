@@ -35,6 +35,9 @@ interface Props {
   loading?: boolean;
   emptyText?: string;
   onCopied?(what: string): void;
+  /** Display order by column name (drag headers to change it). */
+  columnOrder?: string[];
+  onReorder?(names: string[]): void;
 }
 
 const ROW_H = 32;
@@ -86,16 +89,28 @@ export const DataGrid = memo(function DataGrid(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colKey]);
 
+  // Display position -> original column index.
+  const order = useMemo(() => {
+    const all = p.columns.map((_, i) => i);
+    if (!p.columnOrder?.length) return all;
+    const byName = new Map(p.columns.map((c, i) => [c.name, i]));
+    const picked = p.columnOrder.map((n) => byName.get(n)).filter((i): i is number => i !== undefined);
+    return [...picked, ...all.filter((i) => !picked.includes(i))];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.columnOrder, colKey]);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+
   const gutterW = Math.max(44, String((p.rowNumberOffset ?? 0) + p.rowCount).length * 8 + 22);
   const offsets = useMemo(() => {
     const o: number[] = [];
     let x = gutterW;
-    for (const w of widths) {
-      o.push(x);
-      x += w;
+    for (const ci of order) {
+      o[ci] = x;
+      x += widths[ci] ?? 0;
     }
     return { left: o, total: x };
-  }, [widths, gutterW]);
+  }, [widths, gutterW, order]);
   const numeric = useMemo(() => p.columns.map((c) => isNumericType(c.typeName)), [p.columns]);
 
   const virt = useVirtualizer({
@@ -116,10 +131,11 @@ export const DataGrid = memo(function DataGrid(p: Props) {
   };
 
   const move = (dr: number, dc: number) => {
-    const cur = p.cursor ?? { row: 0, col: 0 };
+    const cur = p.cursor ?? { row: 0, col: order[0] ?? 0 };
+    const pos = Math.max(0, Math.min(order.length - 1, order.indexOf(cur.col) + dc));
     const next = {
       row: Math.max(0, Math.min(p.rowCount - 1, cur.row + dr)),
-      col: Math.max(0, Math.min(p.columns.length - 1, cur.col + dc)),
+      col: order[pos] ?? 0,
     };
     p.onCursor(next);
     p.onSelectRows(new Set());
@@ -151,7 +167,7 @@ export const DataGrid = memo(function DataGrid(p: Props) {
     let what = "";
     if (p.selectedRows.size) {
       const rows = [...p.selectedRows].sort((a, b) => a - b);
-      text = toTSV(rows.map((r) => p.columns.map((_, c) => p.getCell(r, c) ?? null)));
+      text = toTSV(rows.map((r) => order.map((c) => p.getCell(r, c) ?? null)));
       what = `${rows.length} row${rows.length > 1 ? "s" : ""}`;
     } else if (p.cursor) {
       text = p.getCell(p.cursor.row, p.cursor.col) ?? "NULL";
@@ -241,13 +257,42 @@ export const DataGrid = memo(function DataGrid(p: Props) {
         <div className="grid-inner" style={{ width: offsets.total, height: totalH }}>
           <div className="grid-head" style={{ width: offsets.total }}>
             <div className="gutter" style={{ width: gutterW }} />
-            {p.columns.map((c, ci) => {
+            {order.map((ci, di) => {
+              const c = p.columns[ci];
               const sorted = p.sort?.column === c.name ? p.sort : null;
               return (
                 <div
                   key={c.name + ci}
-                  className={`gh-cell ${numeric[ci] ? "num" : ""}`}
+                  className={`gh-cell ${numeric[ci] ? "num" : ""} ${dragFrom === di ? "dragging" : ""} ${
+                    dropAt === di && dragFrom !== null && dragFrom !== di ? (dragFrom < di ? "drop-after" : "drop-before") : ""
+                  }`}
                   style={{ width: widths[ci] }}
+                  draggable={!!p.onReorder}
+                  onDragStart={(e) => {
+                    setDragFrom(di);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", c.name);
+                  }}
+                  onDragOver={(e) => {
+                    if (dragFrom === null) return;
+                    e.preventDefault();
+                    setDropAt(di);
+                  }}
+                  onDragEnd={() => {
+                    setDragFrom(null);
+                    setDropAt(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (dragFrom !== null && dragFrom !== di) {
+                      const next = [...order];
+                      const [moved] = next.splice(dragFrom, 1);
+                      next.splice(di, 0, moved);
+                      p.onReorder?.(next.map((i) => p.columns[i].name));
+                    }
+                    setDragFrom(null);
+                    setDropAt(null);
+                  }}
                   onClick={() => p.onSort?.(c.name)}
                   title={`${c.name} · ${c.typeName}`}
                   role="columnheader"
@@ -284,7 +329,8 @@ export const DataGrid = memo(function DataGrid(p: Props) {
                 <div className="gutter" style={{ width: gutterW }} onMouseDown={(e) => clickGutter(e, r)}>
                   {state === "inserted" ? "new" : (p.rowNumberOffset ?? 0) + r + 1}
                 </div>
-                {p.columns.map((c, ci) => {
+                {order.map((ci) => {
+                  const c = p.columns[ci];
                   const focus = p.cursor?.row === r && p.cursor?.col === ci;
                   const isEditing = editing?.row === r && editing?.col === ci;
                   const edited = p.isEdited?.(r, ci);
@@ -324,7 +370,7 @@ export const DataGrid = memo(function DataGrid(p: Props) {
                               commitEdit({ row: Math.min(r + 1, p.rowCount - 1), col: ci });
                             else if (e.key === "Tab") {
                               e.preventDefault();
-                              commitEdit({ row: r, col: Math.min(ci + (e.shiftKey ? -1 : 1), p.columns.length - 1) });
+                              commitEdit({ row: r, col: order[Math.max(0, Math.min(order.length - 1, order.indexOf(ci) + (e.shiftKey ? -1 : 1)))] });
                             } else if (e.key === "Escape") {
                               setEditing(null);
                               scrollRef.current?.focus();

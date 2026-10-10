@@ -13,6 +13,7 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::{
+    alter::AlterRequest,
     config::{self, ConnectionConfig},
     db::{FetchArgs, ResultSet, RowEdit, Session, TableInfo, TablePage, TableStructure},
     error::{AppError, AppResult},
@@ -251,6 +252,16 @@ pub async fn apply_edits(
     edits: Vec<RowEdit>,
 ) -> AppResult<u64> {
     state.get(&session_id)?.apply_edits(&schema, &table, edits).await
+}
+
+#[tauri::command]
+pub async fn plan_alter(state: State<'_, AppState>, session_id: String, req: AlterRequest) -> AppResult<Vec<String>> {
+    state.get(&session_id)?.plan_alter(&req).await
+}
+
+#[tauri::command]
+pub async fn apply_alter(state: State<'_, AppState>, session_id: String, req: AlterRequest) -> AppResult<Vec<String>> {
+    state.get(&session_id)?.apply_alter(&req).await
 }
 
 /// Native file picker for SQLite databases. The path is chosen by the user,

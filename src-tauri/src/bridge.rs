@@ -144,6 +144,8 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
                 .apply_edits(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?, arg::<Vec<RowEdit>>(&a, "edits")?)
                 .await?
         ),
+        "plan_alter" => json!(state.get(&sid()?)?.plan_alter(&arg(&a, "req")?).await?),
+        "apply_alter" => json!(state.get(&sid()?)?.apply_alter(&arg(&a, "req")?).await?),
         "pick_file" => json!(env_path("TABLA_BRIDGE_PICK").map(|p| p.to_string_lossy().into_owned())),
         "pick_sqlite_file" => json!(env_path("TABLA_BRIDGE_SQLITE").map(|p| p.to_string_lossy().into_owned())),
         "export_file" => {

@@ -1,4 +1,5 @@
 mod ai_guard;
+mod alter;
 #[cfg(debug_assertions)]
 mod bridge;
 mod commands;
@@ -36,6 +37,8 @@ pub fn run() {
             commands::fetch_rows,
             commands::run_query,
             commands::apply_edits,
+            commands::plan_alter,
+            commands::apply_alter,
             commands::pick_sqlite_file,
             commands::pick_file,
             commands::export_file,
