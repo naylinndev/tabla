@@ -2,18 +2,20 @@
 
 # Tabla
 
-**A fast, free and open-source database client for macOS, Windows and Linux.**
+**Every database. One beautiful app. Free forever.**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-7c6cff.svg)](LICENSE)
-[![CI](https://github.com/naylinndev/tabla/actions/workflows/ci.yml/badge.svg)](https://github.com/naylinndev/tabla/actions/workflows/ci.yml)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-555.svg)](#install)
-[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB.svg)](https://tauri.app)
-[![PRs welcome](https://img.shields.io/badge/PRs-welcome-3ecf8e.svg)](#contributing)
+A fast, native, open-source database client for macOS, Windows and Linux,
+for PostgreSQL, MySQL, MariaDB, SQLite, Redis and the clouds they run on.
 
-Browse, edit and query PostgreSQL, MySQL, MariaDB, SQLite and popular hosted
-databases from one native app, with no paywall, no tab limits and no telemetry.
+[Download](https://github.com/naylinndev/tabla/releases/latest) · [Docs](#features) · [Releases](https://github.com/naylinndev/tabla/releases) · [Security](SECURITY.md)
 
-[Features](#features) · [Install](#install) · [Supported databases](#supported-databases) · [Security](#security) · [Development](#development) · [Roadmap](#roadmap)
+[![License: MIT](https://img.shields.io/badge/license-MIT-0aa2ff?style=for-the-badge)](LICENSE)
+[![CI](https://img.shields.io/github/actions/workflow/status/naylinndev/tabla/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/naylinndev/tabla/actions/workflows/ci.yml)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20·%20Windows%20·%20Linux-1fb6ff?style=for-the-badge)](#install)
+[![Built with Tauri](https://img.shields.io/badge/built%20with-Tauri%202-24c8db?style=for-the-badge)](https://tauri.app)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-22a06b?style=for-the-badge)](CONTRIBUTING.md)
+
+`No paywall. No tab limits. No telemetry.`
 
 </div>
 
@@ -236,14 +238,40 @@ src-tauri/            Rust backend
 
 ## Contributing
 
-Issues and pull requests are welcome. For larger changes, please open an issue
-first so we can agree on the approach. Please keep personal data, credentials
-and real database dumps out of commits, issues and screenshots.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
+for setup, tests and guidelines, and [SECURITY.md](SECURITY.md) to report a
+vulnerability privately.
 
 ## License
 
-Tabla is free and open-source software, released under the **[MIT License](LICENSE)**.
-You can use, modify and distribute it, including commercially, as long as the
-copyright notice is kept.
+Tabla is free forever, for everyone, under the [MIT License](LICENSE):
 
-Copyright © 2026 Tabla contributors
+```text
+MIT License
+
+Copyright (c) 2026 Tabla contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+<div align="center">
+
+**Your data, your tools, your rules.**
+
+</div>
