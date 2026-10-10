@@ -146,6 +146,9 @@ fn install_locations() -> Vec<std::path::PathBuf> {
     let mut v = Vec::new();
     #[cfg(target_os = "macos")]
     {
+        // Homebrew's cask links `tabla` here; prefer it (short and stable across updates).
+        v.push("/opt/homebrew/bin/tabla".into());
+        v.push("/usr/local/bin/tabla".into());
         v.push("/Applications/Tabla.app/Contents/MacOS/tabla".into());
         if let Some(h) = dirs::home_dir() {
             v.push(h.join("Applications/Tabla.app/Contents/MacOS/tabla"));
@@ -179,7 +182,11 @@ pub fn mcp_info() -> AppResult<McpCommand> {
     if let Some(found) = locations.iter().find(|p| p.exists()) {
         return Ok(McpCommand { binary: path(found), installed: true });
     }
-    let fallback = locations.first().map(|p| path(p)).unwrap_or_else(|| path(&exe));
+    let fallback = locations
+        .iter()
+        .find(|p| p.to_string_lossy().contains(".app/") || cfg!(not(target_os = "macos")))
+        .map(|p| path(p))
+        .unwrap_or_else(|| path(&exe));
     Ok(McpCommand { binary: fallback, installed: false })
 }
 

@@ -46,6 +46,13 @@ databases from one native app, with no paywall, no tab limits and no telemetry.
 brew install --cask naylinndev/tabla/tabla
 ```
 
+This also puts `tabla` on your PATH, so AI tools can run `tabla mcp`.
+Early builds are unsigned; if macOS says the app can't be opened, right-click
+**Tabla.app → Open** once (or remove the quarantine flag with
+`xattr -dr com.apple.quarantine /Applications/Tabla.app`).
+
+Maintainers: release and tap setup is described in [packaging/homebrew](packaging/homebrew/README.md).
+
 **Direct download:** grab the `.dmg` (macOS), `.msi` (Windows) or `.AppImage`/`.deb` (Linux) from [Releases](https://github.com/naylinndev/tabla/releases).
 
 **From source:** see [Development](#development).
