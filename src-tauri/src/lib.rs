@@ -1,4 +1,12 @@
 mod ai_guard;
+
+/// Tests that change structure on the shared test databases take these locks,
+/// so parallel tests never race on the same catalog.
+#[cfg(test)]
+pub(crate) mod test_lock {
+    pub static PG: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    pub static MYSQL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+}
 mod alter;
 #[cfg(debug_assertions)]
 mod bridge;

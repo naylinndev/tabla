@@ -322,6 +322,7 @@ mod tests {
 
     #[tokio::test]
     async fn postgres_alter() {
+        let _serial = crate::test_lock::PG.lock().await;
         let Some(c) = cfg("TABLA_TEST_PG", Driver::Postgres) else { return };
         let s = Session::connect(&c, None).await.unwrap();
         s.run_script("DROP TABLE IF EXISTS alter_t; CREATE TABLE alter_t (id serial PRIMARY KEY, title text, n int); INSERT INTO alter_t (title, n) VALUES ('a', 1)", 1).await.unwrap();
@@ -370,6 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn mysql_alter_and_reorder_keeps_auto_increment() {
+        let _serial = crate::test_lock::MYSQL.lock().await;
         let Some(c) = cfg("TABLA_TEST_MYSQL", Driver::Mysql) else { return };
         let s = Session::connect(&c, None).await.unwrap();
         let db = c.database.clone();

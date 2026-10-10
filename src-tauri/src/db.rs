@@ -1343,6 +1343,7 @@ mod tests {
 
     #[tokio::test]
     async fn postgres() {
+        let _serial = crate::test_lock::PG.lock().await;
         let Some(cfg) = cfg_from_env("TABLA_TEST_PG", Driver::Postgres) else { return };
         let s = Session::connect(&cfg, None).await.unwrap();
         assert!(!s.server_version().await.unwrap().is_empty());
@@ -1380,6 +1381,7 @@ mod tests {
 
     #[tokio::test]
     async fn mysql() {
+        let _serial = crate::test_lock::MYSQL.lock().await;
         let Some(cfg) = cfg_from_env("TABLA_TEST_MYSQL", Driver::Mysql) else { return };
         let s = Session::connect(&cfg, None).await.unwrap();
         roundtrip(&s, "tabla_test", "products", "title").await;
@@ -1474,6 +1476,7 @@ mod relation_tests {
 
     #[tokio::test]
     async fn postgres_relations() {
+        let _serial = crate::test_lock::PG.lock().await;
         let Some(c) = cfg("TABLA_TEST_PG", Driver::Postgres) else { return };
         let s = Session::connect(&c, None).await.unwrap();
         check(
@@ -1490,6 +1493,7 @@ mod relation_tests {
 
     #[tokio::test]
     async fn mysql_relations() {
+        let _serial = crate::test_lock::MYSQL.lock().await;
         let Some(c) = cfg("TABLA_TEST_MYSQL", Driver::Mysql) else { return };
         let s = Session::connect(&c, None).await.unwrap();
         let db = c.database.clone();

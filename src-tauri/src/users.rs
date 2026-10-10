@@ -133,9 +133,13 @@ mod tests {
 
     #[tokio::test]
     async fn postgres_users_and_grants() {
+        let _serial = crate::test_lock::PG.lock().await;
         let Some(c) = cfg("TABLA_TEST_PG", Driver::Postgres) else { return };
         let s = Session::connect(&c, None).await.unwrap();
-        s.run_script("DROP ROLE IF EXISTS tabla_ro_test", 1).await.unwrap();
+        // Idempotent cleanup, even after an interrupted earlier run.
+        let cleanup = "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tabla_ro_test') THEN \
+                       EXECUTE 'DROP OWNED BY tabla_ro_test'; EXECUTE 'DROP ROLE tabla_ro_test'; END IF; END $$";
+        s.run_script(cleanup, 1).await.unwrap();
         s.run_script(
             "CREATE ROLE tabla_ro_test LOGIN PASSWORD 'pw-123'; GRANT USAGE ON SCHEMA public TO tabla_ro_test; \
              GRANT SELECT ON ALL TABLES IN SCHEMA public TO tabla_ro_test",
@@ -152,13 +156,12 @@ mod tests {
         assert!(!g.iter().any(|l| l.contains("INSERT")), "{g:?}");
         // The password never reaches the console log.
         assert!(!s.log_since(0).iter().any(|e| e.sql.contains("pw-123")));
-        s.run_script("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM tabla_ro_test; REVOKE ALL ON SCHEMA public FROM tabla_ro_test; DROP ROLE tabla_ro_test", 1)
-            .await
-            .unwrap();
+        s.run_script(cleanup, 1).await.unwrap();
     }
 
     #[tokio::test]
     async fn mysql_users_and_grants() {
+        let _serial = crate::test_lock::MYSQL.lock().await;
         let Some(c) = cfg("TABLA_TEST_MYSQL", Driver::Mysql) else { return };
         let s = Session::connect(&c, None).await.unwrap();
         s.run_script("DROP USER IF EXISTS 'tabla_ro_test'@'localhost'", 1).await.unwrap();
