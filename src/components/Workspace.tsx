@@ -44,6 +44,14 @@ export function Rail() {
 
   const setAiOpen = useApp((s) => s.setAiOpen);
   const [appearance, setAppearance] = useState(false);
+  const connections = useApp((s) => s.connections);
+  const connecting = useApp((s) => s.connecting);
+  const openConnection = useApp((s) => s.openConnection);
+  // Every saved connection, in saved order, plus any open session not (or no longer) saved.
+  const railItems = [
+    ...connections.map((conn) => ({ conn, session: sessions.find((s) => s.connection.id === conn.id) })),
+    ...sessions.filter((s) => !connections.some((c) => c.id === s.connection.id)).map((s) => ({ conn: s.connection, session: s })),
+  ];
   return (
     <nav className="rail">
       <div className="titlebar-space" data-tauri-drag-region style={{ width: "100%" }} />
@@ -55,22 +63,32 @@ export function Rail() {
       >
         <Home />
       </button>
-      {sessions.length > 0 && <div className="rail-sep" />}
-      {sessions.map((s) => (
-        <div key={s.id} className={`rail-conn ${s.id === activeId ? "active" : ""}`} title={`${s.connection.name} · ${s.connection.host || s.connection.database}`}>
-          <button
-            className={`rail-item conn ${s.id === activeId ? "active" : ""}`}
-            style={{ "--c": s.connection.color } as React.CSSProperties}
-            onClick={() => setActive(s.id)}
-            aria-label={s.connection.name}
-          >
-            <DriverIcon driver={s.connection.driver} provider={s.connection.provider} size={30} />
-            <span className="rail-dot" />
-            {s.connection.tag === "production" && <span className="rail-prod" />}
-          </button>
-          <span className="rail-name">{s.connection.name}</span>
-        </div>
-      ))}
+      {railItems.length > 0 && <div className="rail-sep" />}
+      <div className="rail-list">
+        {railItems.map(({ conn: c, session: s }) => {
+          const active = !!s && s.id === activeId;
+          return (
+            <div
+              key={c.id}
+              className={`rail-conn ${active ? "active" : ""} ${s ? "open" : "closed"}`}
+              title={`${c.name} · ${c.driver === "sqlite" ? c.database : `${c.host}:${c.port}`}${s ? "" : " · click to connect"}`}
+            >
+              <button
+                className={`rail-item conn ${active ? "active" : ""}`}
+                style={{ "--c": c.color } as React.CSSProperties}
+                onClick={() => (s ? setActive(s.id) : openConnection(c))}
+                aria-label={s ? c.name : `Connect to ${c.name}`}
+              >
+                <DriverIcon driver={c.driver} provider={c.provider} size={30} />
+                {s && <span className="rail-dot" />}
+                {connecting === c.id && <span className="rail-spin spinner" />}
+                {c.tag === "production" && <span className="rail-prod" />}
+              </button>
+              <span className="rail-name">{c.name}</span>
+            </div>
+          );
+        })}
+      </div>
       <button className="rail-item add" onClick={() => setEditing(newConnection())} title="New connection (Mod+N)">
         <Plus />
       </button>
