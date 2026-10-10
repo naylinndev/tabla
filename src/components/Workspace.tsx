@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
+  ChevronLeft,
+  ChevronRight,
   Code2,
   Eye,
   FileCode2,
@@ -297,12 +299,47 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
   const tabsRef = useRef<HTMLDivElement>(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
 
+  // Browser-style back/forward over the tabs you've visited.
+  const nav = useRef<{ stack: string[]; idx: number; jumping: boolean }>({ stack: [], idx: -1, jumping: false });
+  const [, forceNav] = useState(0);
+  useEffect(() => {
+    const n = nav.current;
+    const id = session.activeTabId;
+    if (!id) return;
+    if (n.jumping) {
+      n.jumping = false;
+      return;
+    }
+    if (n.stack[n.idx] === id) return;
+    n.stack = [...n.stack.slice(0, n.idx + 1), id].slice(-100);
+    n.idx = n.stack.length - 1;
+    forceNav((x) => x + 1);
+  }, [session.activeTabId]);
+  const stepRef = useRef<(d: -1 | 1) => void>(() => {});
+  const liveIds = new Set(session.tabs.map((t) => t.id));
+  const step = (dir: -1 | 1) => {
+    const n = nav.current;
+    let i = n.idx + dir;
+    while (i >= 0 && i < n.stack.length && !liveIds.has(n.stack[i])) i += dir;
+    if (i < 0 || i >= n.stack.length) return;
+    n.idx = i;
+    n.jumping = true;
+    setActiveTab(session.id, n.stack[i]);
+    forceNav((x) => x + 1);
+  };
+  stepRef.current = step;
+  const canBack = nav.current.stack.slice(0, nav.current.idx).some((id) => liveIds.has(id));
+  const canFwd = nav.current.stack.slice(nav.current.idx + 1).some((id) => liveIds.has(id));
+
   useEffect(() => {
     if (!visible) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
         e.preventDefault();
         setConsoleOpen((v) => !v);
+      } else if ((e.metaKey || e.ctrlKey) && e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        stepRef.current(e.key === "ArrowLeft" ? -1 : 1);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -318,6 +355,14 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
       <Sidebar session={session} />
       <main className={`main ${session.connection.tag === "production" ? "production" : ""}`}>
         <div className="tabbar" data-tauri-drag-region>
+          <div className="nav-btns">
+            <button className="icon-btn" disabled={!canBack} onClick={() => step(-1)} title="Back (Mod+Option+←)">
+              <ChevronLeft />
+            </button>
+            <button className="icon-btn" disabled={!canFwd} onClick={() => step(1)} title="Forward (Mod+Option+→)">
+              <ChevronRight />
+            </button>
+          </div>
           <div className="tabs-scroll" ref={tabsRef}>
             {session.tabs.map((t) => (
               <div
