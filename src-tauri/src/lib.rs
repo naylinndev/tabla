@@ -1,7 +1,22 @@
+mod ai_guard;
+#[cfg(debug_assertions)]
+mod bridge;
 mod commands;
 mod config;
 mod db;
 mod error;
+mod mcp;
+mod ssh;
+
+pub fn run_mcp() {
+    mcp::run();
+}
+
+/// Debug builds only: serve the backend over localhost HTTP for UI testing in a browser.
+#[cfg(debug_assertions)]
+pub fn run_bridge() {
+    bridge::run();
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,7 +37,10 @@ pub fn run() {
             commands::run_query,
             commands::apply_edits,
             commands::pick_sqlite_file,
+            commands::pick_file,
             commands::export_file,
+            commands::scan_env_files,
+            commands::mcp_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tabla");

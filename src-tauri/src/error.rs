@@ -2,7 +2,7 @@ use serde::{Serialize, Serializer};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    #[error("{0}")]
+    #[error("{}", db_message(.0))]
     Db(#[from] sqlx::Error),
     #[error("Keychain error: {0}")]
     Keyring(#[from] keyring::Error),
@@ -30,3 +30,19 @@ impl Serialize for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+/// The server's own message plus DETAIL/HINT, without sqlx's prefix or the
+/// Postgres source-file location ("at line 1452") that confuses users.
+fn db_message(e: &sqlx::Error) -> String {
+    let Some(db) = e.as_database_error() else { return e.to_string() };
+    let mut out = db.message().to_string();
+    if let Some(pg) = db.try_downcast_ref::<sqlx::postgres::PgDatabaseError>() {
+        if let Some(d) = pg.detail() {
+            out.push_str(&format!("\nDetail: {d}"));
+        }
+        if let Some(h) = pg.hint() {
+            out.push_str(&format!("\nHint: {h}"));
+        }
+    }
+    out
+}

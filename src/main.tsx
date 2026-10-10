@@ -5,6 +5,9 @@ import "@fontsource-variable/jetbrains-mono";
 import "./styles/app.css";
 import App from "./App";
 import { isMac } from "./components/ui";
+import { installDevBridge } from "./lib/devBridge";
+
+installDevBridge();
 
 if (isMac) document.documentElement.classList.add("mac");
 

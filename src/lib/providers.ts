@@ -284,3 +284,20 @@ export const PROVIDERS: Provider[] = [
 
 export const providerById = (id: string | undefined, driver: Driver): Provider =>
   PROVIDERS.find((p) => p.id === id) ?? PROVIDERS.find((p) => p.id === driver)!;
+
+/** Guesses the hosted provider from a host name (used when importing URLs). */
+export function detectProvider(host: string, driver: Driver): string {
+  const h = host.toLowerCase();
+  const rules: [RegExp, string][] = [
+    [/supabase\.(co|com)$/, "supabase"],
+    [/neon\.tech$/, "neon"],
+    [/(tsdb\.cloud\.timescale\.com|timescale\.com)$/, "timescale"],
+    [/cockroachlabs\.cloud$/, "cockroach"],
+    [/redshift(-serverless)?\.amazonaws\.com$/, "redshift"],
+    [/rds\.amazonaws\.com$/, "rds"],
+    [/psdb\.cloud$/, "planetscale"],
+    [/tidbcloud\.com$/, "tidb"],
+    [/yugabyte\.cloud$/, "yugabyte"],
+  ];
+  return rules.find(([re]) => re.test(h))?.[1] ?? driver;
+}

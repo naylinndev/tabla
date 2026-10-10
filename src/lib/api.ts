@@ -4,6 +4,18 @@ export type Driver = "postgres" | "mysql" | "sqlite";
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 export type EnvTag = "" | "local" | "development" | "staging" | "production";
 
+export type SshAuth = "password" | "key" | "agent";
+
+export interface SshConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  auth: SshAuth;
+  /** Path to a private key file; the key is never copied. */
+  keyPath: string;
+}
+
 export interface ConnectionConfig {
   id: string;
   name: string;
@@ -17,9 +29,23 @@ export interface ConnectionConfig {
   password?: string;
   database: string;
   sslMode: SslMode;
+  sslCa: string;
+  sslCert: string;
+  sslKey: string;
+  ssh: SshConfig;
+  /** SSH password or key passphrase. Same rules as `password`. */
+  sshSecret?: string;
   color: string;
   tag: EnvTag;
   readOnly: boolean;
+  /** Share (read-only) with AI assistants through `tabla mcp`. */
+  aiAccess: boolean;
+}
+
+export interface EnvUrl {
+  file: string;
+  key: string;
+  url: string;
 }
 
 export interface ColumnMeta {
@@ -111,8 +137,11 @@ export const api = {
   applyEdits: (sessionId: string, schema: string, table: string, edits: RowEdit[]) =>
     invoke<number>("apply_edits", { sessionId, schema, table, edits }),
   pickSqliteFile: () => invoke<string | null>("pick_sqlite_file"),
+  pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>
     invoke<string | null>("export_file", { defaultName, contents }),
+  scanEnvFiles: () => invoke<EnvUrl[] | null>("scan_env_files"),
+  mcpCommand: () => invoke<{ binary: string; installed: boolean }>("mcp_command"),
 };
 
 export function errorMessage(e: unknown): string {

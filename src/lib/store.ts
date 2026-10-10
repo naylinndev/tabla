@@ -34,6 +34,7 @@ interface State {
   connecting: string | null;
   theme: Theme;
   paletteOpen: boolean;
+  aiOpen: boolean;
   editing: ConnectionConfig | null;
   toasts: Toast[];
 
@@ -53,6 +54,7 @@ interface State {
   setActiveTab(sessionId: string, tabId: string): void;
   setTheme(t: Theme): void;
   setPalette(open: boolean): void;
+  setAiOpen(open: boolean): void;
   setEditing(c: ConnectionConfig | null): void;
   toast(message: string, kind?: Toast["kind"]): void;
   dismissToast(id: string): void;
@@ -115,6 +117,7 @@ export const useApp = create<State>((set, get) => {
     connecting: null,
     theme: local.get<Theme>("tabla.theme", "system"),
     paletteOpen: false,
+    aiOpen: false,
     editing: null,
     toasts: [],
 
@@ -156,7 +159,7 @@ export const useApp = create<State>((set, get) => {
         const tabs: Tab[] = drafts.map((d) => ({ id: uid(), kind: "query", title: d.title, sql: d.sql }));
         const session: Session = {
           id: info.sessionId,
-          connection: { ...c, password: undefined },
+          connection: { ...c, password: undefined, sshSecret: undefined },
           serverVersion: info.serverVersion,
           schemas: info.schemas,
           schema,
@@ -278,6 +281,10 @@ export const useApp = create<State>((set, get) => {
       set({ paletteOpen });
     },
 
+    setAiOpen(aiOpen) {
+      set({ aiOpen });
+    },
+
     setEditing(editing) {
       set({ editing });
     },
@@ -309,8 +316,13 @@ export function newConnection(): ConnectionConfig {
     password: "",
     database: "",
     sslMode: "prefer",
+    sslCa: "",
+    sslCert: "",
+    sslKey: "",
+    ssh: { enabled: false, host: "", port: 22, user: "", auth: "key", keyPath: "~/.ssh/id_ed25519" },
     color: "#7c6cff",
     tag: "local",
     readOnly: false,
+    aiAccess: false,
   };
 }

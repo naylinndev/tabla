@@ -34,16 +34,18 @@ pub struct Session {
     pub pool: Pool,
     pub driver: Driver,
     pub read_only: bool,
+    /// Kept alive for the lifetime of the pool when connecting through SSH.
+    _tunnel: Option<crate::ssh::Tunnel>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ColumnMeta {
     pub name: String,
     pub type_name: String,
 }
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultSet {
     pub columns: Vec<ColumnMeta>,
@@ -145,8 +147,20 @@ fn my_ssl(m: SslMode) -> MySqlSslMode {
 
 impl Session {
     pub async fn connect(cfg: &ConnectionConfig, password: Option<String>) -> AppResult<Self> {
-        let host = if cfg.host.trim().is_empty() { "localhost" } else { cfg.host.trim() };
-        let port = cfg.port_or_default();
+        let db_host = if cfg.host.trim().is_empty() { "localhost" } else { cfg.host.trim() };
+        let db_port = cfg.port_or_default();
+        // Through SSH, the DB host/port are resolved on the SSH server and we
+        // connect to the local end of the tunnel instead.
+        let tunnel = if cfg.ssh.enabled && cfg.driver != Driver::Sqlite {
+            let secret = crate::config::resolve_ssh_secret(cfg)?;
+            Some(crate::ssh::open(&cfg.ssh, secret, db_host, db_port).await?)
+        } else {
+            None
+        };
+        let (host, port) = match &tunnel {
+            Some(t) => ("127.0.0.1", t.local_port),
+            None => (db_host, db_port),
+        };
         let pool = match cfg.driver {
             Driver::Postgres => {
                 let mut o = PgConnectOptions::new()
@@ -160,6 +174,15 @@ impl Session {
                 }
                 if let Some(p) = &password {
                     o = o.password(p);
+                }
+                if !cfg.ssl_ca.is_empty() {
+                    o = o.ssl_root_cert(&cfg.ssl_ca);
+                }
+                if !cfg.ssl_cert.is_empty() {
+                    o = o.ssl_client_cert(&cfg.ssl_cert);
+                }
+                if !cfg.ssl_key.is_empty() {
+                    o = o.ssl_client_key(&cfg.ssl_key);
                 }
                 let mut po = PgPoolOptions::new().max_connections(4).acquire_timeout(ACQUIRE_TIMEOUT);
                 if cfg.read_only {
@@ -184,6 +207,15 @@ impl Session {
                 if let Some(p) = &password {
                     o = o.password(p);
                 }
+                if !cfg.ssl_ca.is_empty() {
+                    o = o.ssl_ca(&cfg.ssl_ca);
+                }
+                if !cfg.ssl_cert.is_empty() {
+                    o = o.ssl_client_cert(&cfg.ssl_cert);
+                }
+                if !cfg.ssl_key.is_empty() {
+                    o = o.ssl_client_key(&cfg.ssl_key);
+                }
                 let mut po = MySqlPoolOptions::new().max_connections(4).acquire_timeout(ACQUIRE_TIMEOUT);
                 if cfg.read_only {
                     po = po.after_connect(|conn, _| {
@@ -207,7 +239,7 @@ impl Session {
                 Pool::Lite(SqlitePoolOptions::new().max_connections(2).connect_with(o).await?)
             }
         };
-        Ok(Session { pool, driver: cfg.driver, read_only: cfg.read_only })
+        Ok(Session { pool, driver: cfg.driver, read_only: cfg.read_only, _tunnel: tunnel })
     }
 
     pub async fn close(&self) {
@@ -397,11 +429,22 @@ impl Session {
         let from = d.qualified(&a.schema, &a.table);
         let filter = a.filter.as_deref().map(str::trim).filter(|f| !f.is_empty());
         let where_sql = filter.map(|f| format!(" WHERE {f}")).unwrap_or_default();
-        let order_sql = a
-            .sort
-            .as_ref()
-            .map(|s| format!(" ORDER BY {} {}", d.quote_ident(&s.column), if s.desc { "DESC" } else { "ASC" }))
-            .unwrap_or_default();
+        let order_sql = match &a.sort {
+            Some(s) => format!(" ORDER BY {} {}", d.quote_ident(&s.column), if s.desc { "DESC" } else { "ASC" }),
+            // Without an explicit sort, order by primary key so paging is stable
+            // (physical order shifts after updates and pages could skip/repeat rows).
+            None => {
+                let pks: Vec<String> = self
+                    .table_structure(&a.schema, &a.table)
+                    .await?
+                    .columns
+                    .into_iter()
+                    .filter(|c| c.primary_key)
+                    .map(|c| d.quote_ident(&c.name))
+                    .collect();
+                if pks.is_empty() { String::new() } else { format!(" ORDER BY {}", pks.join(", ")) }
+            }
+        };
         let sql = format!("SELECT * FROM {from}{where_sql}{order_sql} LIMIT {} OFFSET {}", a.limit, a.offset);
 
         let mut sets = self.run_script(&sql, a.limit as usize).await?;
@@ -424,6 +467,63 @@ impl Session {
             .and_then(|r| r.into_iter().next().flatten())
             .and_then(|v| v.parse().ok());
         Ok(TablePage { result, total, sql })
+    }
+
+    /// Runs one statement inside a read-only transaction that is always rolled
+    /// back, with a server-side timeout. Used for AI assistants (MCP).
+    /// Callers must validate the SQL with `ai_guard::check` first.
+    pub async fn run_readonly(&self, sql: &str, max_rows: usize) -> AppResult<ResultSet> {
+        let body = AssertSqlSafe(sql.to_owned());
+        macro_rules! guarded {
+            ($pool:expr, $begin:expr, $timeout:expr, $cell:expr) => {{
+                let mut conn = $pool.acquire().await?;
+                conn.execute($begin).await?;
+                let out = async {
+                    conn.execute($timeout).await?;
+                    collect(sqlx::raw_sql(body).fetch_many(&mut *conn), max_rows, |q| q.rows_affected(), $cell).await
+                }
+                .await;
+                // Always roll back, even after an error, before the connection returns to the pool.
+                let _ = conn.execute("ROLLBACK").await;
+                out?
+            }};
+        }
+        let sets = match &self.pool {
+            Pool::Pg(p) => guarded!(p, "BEGIN READ ONLY", "SET LOCAL statement_timeout = 15000", pg_cell),
+            Pool::My(p) => guarded!(p, "START TRANSACTION READ ONLY", "SET SESSION MAX_EXECUTION_TIME = 15000", my_cell),
+            Pool::Lite(p) => guarded!(p, "BEGIN", "SELECT 1", lite_cell),
+        };
+        Ok(sets.into_iter().next().unwrap_or_default())
+    }
+
+    /// Compact, AI-friendly description of every table in a schema.
+    pub async fn schema_overview(&self, schema: &str, max_tables: usize) -> AppResult<String> {
+        let tables = self.list_tables(schema).await?;
+        let mut out = String::new();
+        for t in tables.iter().take(max_tables) {
+            let st = self.table_structure(schema, &t.name).await?;
+            let cols = st
+                .columns
+                .iter()
+                .map(|c| {
+                    let mut s = format!("{} {}", c.name, c.data_type);
+                    if c.primary_key {
+                        s.push_str(" PK");
+                    }
+                    if !c.nullable {
+                        s.push_str(" NOT NULL");
+                    }
+                    s
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let kind = if t.kind == "table" { "" } else { " (view)" };
+            out.push_str(&format!("{}{}: {}\n", t.name, kind, cols));
+        }
+        if tables.len() > max_tables {
+            out.push_str(&format!("... and {} more tables\n", tables.len() - max_tables));
+        }
+        Ok(out)
     }
 
     /// Applies cell edits, inserts and deletes in a single transaction.
@@ -671,9 +771,15 @@ mod tests {
             password: None,
             database: String::new(),
             ssl_mode: SslMode::Disable,
+            ssl_ca: String::new(),
+            ssl_cert: String::new(),
+            ssl_key: String::new(),
+            ssh: Default::default(),
+            ssh_secret: None,
             color: String::new(),
             tag: String::new(),
             read_only: false,
+            ai_access: false,
         };
         if driver == Driver::Sqlite {
             cfg.database = v;
@@ -745,7 +851,7 @@ mod tests {
 
         // Multi-statement script, empty result, and odd types decode as text.
         let sets = s
-            .run_script("SELECT profile, tags, feeling, avatar, balance FROM users LIMIT 1; SELECT * FROM empty_t; UPDATE users SET age = age WHERE id < 3", 100)
+            .run_script("SELECT profile, tags, feeling, avatar, balance FROM users WHERE avatar IS NOT NULL ORDER BY id LIMIT 1; SELECT * FROM empty_t; UPDATE users SET age = age WHERE id < 3", 100)
             .await
             .unwrap();
         assert_eq!(sets.len(), 3);
@@ -756,6 +862,11 @@ mod tests {
 
         let empty = s.run_script("SELECT * FROM empty_t", 100).await.unwrap();
         assert_eq!(empty[0].columns.len(), 2);
+
+        // Second line of defense for AI queries: even unvalidated writes fail.
+        let err = s.run_readonly("DELETE FROM users WHERE id = -1", 10).await.unwrap_err().to_string();
+        assert!(err.contains("read-only"), "{err}");
+        assert!(s.run_readonly("SELECT count(*) FROM users", 10).await.is_ok(), "connection reusable after rollback");
     }
 
     #[tokio::test]
@@ -766,6 +877,9 @@ mod tests {
         let sets = s.run_script("SELECT meta, img, price FROM products ORDER BY id", 100).await.unwrap();
         assert_eq!(sets[0].rows.len(), 3);
         assert!(sets[0].rows[1][1].is_none());
+
+        let err = s.run_readonly("UPDATE products SET stock = stock WHERE id = -1", 10).await.unwrap_err().to_string();
+        assert!(err.to_lowercase().contains("read only"), "{err}");
     }
 
     #[tokio::test]

@@ -146,12 +146,31 @@ function csvCell(v: string | null) {
 
 export function toCSV(columns: ColumnMeta[], rows: (string | null)[][]): string {
   const head = columns.map((c) => csvCell(c.name)).join(",");
-  return [head, ...rows.map((r) => r.map(csvCell).join(","))].join("\n");
+  return [head, ...rows.map((r) => r.map(csvCell).join(","))].join("\n") + "\n";
+}
+
+/** Converts a text cell to its natural JSON type (number, boolean, object). */
+function typedValue(v: string | null, type: string): unknown {
+  if (v === null) return null;
+  if (isBoolType(type)) return v === "t" || v === "true" || v === "1";
+  if (isNumericType(type)) {
+    const n = Number(v);
+    // Keep huge integers/decimals as strings so no precision is lost.
+    return Number.isFinite(n) && Math.abs(n) < Number.MAX_SAFE_INTEGER && v.replace(/\.?0+$/, "").length <= 16 ? n : v;
+  }
+  if (isJsonType(type)) {
+    try {
+      return JSON.parse(v);
+    } catch {
+      return v;
+    }
+  }
+  return v;
 }
 
 export function toJSON(columns: ColumnMeta[], rows: (string | null)[][]): string {
   return JSON.stringify(
-    rows.map((r) => Object.fromEntries(columns.map((c, i) => [c.name, r[i]]))),
+    rows.map((r) => Object.fromEntries(columns.map((c, i) => [c.name, typedValue(r[i], c.typeName)]))),
     null,
     2,
   );

@@ -7,11 +7,13 @@
 use std::{fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
 
 use crate::error::{AppError, AppResult};
 
-const KEYRING_SERVICE: &str = "dev.tabla.desktop";
+/// Matches the Tauri bundle identifier, so the GUI and `tabla mcp` share
+/// the same config directory and keychain entries.
+pub const APP_ID: &str = "dev.tabla.desktop";
+const KEYRING_SERVICE: &str = APP_ID;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,6 +66,27 @@ pub enum SslMode {
     VerifyFull,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SshAuth {
+    Password,
+    #[default]
+    Key,
+    Agent,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SshConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub auth: SshAuth,
+    /// Private key file, e.g. ~/.ssh/id_ed25519 (the key itself is never copied).
+    pub key_path: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionConfig {
@@ -88,6 +111,19 @@ pub struct ConnectionConfig {
     pub database: String,
     #[serde(default)]
     pub ssl_mode: SslMode,
+    /// TLS certificate files (paths only): CA, client certificate, client key.
+    #[serde(default)]
+    pub ssl_ca: String,
+    #[serde(default)]
+    pub ssl_cert: String,
+    #[serde(default)]
+    pub ssl_key: String,
+    #[serde(default)]
+    pub ssh: SshConfig,
+    /// SSH password or key passphrase. Same rules as `password`: UI -> backend
+    /// only, stored in the keychain, never serialized.
+    #[serde(default, skip_serializing)]
+    pub ssh_secret: Option<String>,
     #[serde(default)]
     pub color: String,
     /// "local" | "development" | "staging" | "production"
@@ -95,6 +131,9 @@ pub struct ConnectionConfig {
     pub tag: String,
     #[serde(default)]
     pub read_only: bool,
+    /// Expose this connection (read-only) to AI assistants via `tabla mcp`.
+    #[serde(default)]
+    pub ai_access: bool,
 }
 
 impl ConnectionConfig {
@@ -103,14 +142,24 @@ impl ConnectionConfig {
     }
 }
 
-fn store_path(app: &AppHandle) -> AppResult<PathBuf> {
-    let dir = app.path().app_config_dir()?;
+/// Same location Tauri uses for `app_config_dir()`.
+/// `TABLA_CONFIG_DIR` overrides it (used by tests and the dev bridge so they
+/// never touch the user's real profiles).
+pub fn config_dir() -> AppResult<PathBuf> {
+    if let Some(dir) = std::env::var_os("TABLA_CONFIG_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    Ok(dirs::config_dir().ok_or_else(|| AppError::msg("No config directory on this system"))?.join(APP_ID))
+}
+
+fn store_path() -> AppResult<PathBuf> {
+    let dir = config_dir()?;
     fs::create_dir_all(&dir)?;
     Ok(dir.join("connections.json"))
 }
 
-pub fn load(app: &AppHandle) -> AppResult<Vec<ConnectionConfig>> {
-    let path = store_path(app)?;
+pub fn load() -> AppResult<Vec<ConnectionConfig>> {
+    let path = store_path()?;
     if !path.exists() {
         return Ok(vec![]);
     }
@@ -118,8 +167,8 @@ pub fn load(app: &AppHandle) -> AppResult<Vec<ConnectionConfig>> {
     Ok(serde_json::from_str(&raw)?)
 }
 
-fn write(app: &AppHandle, list: &[ConnectionConfig]) -> AppResult<()> {
-    let path = store_path(app)?;
+fn write(list: &[ConnectionConfig]) -> AppResult<()> {
+    let path = store_path()?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_string_pretty(list)?)?;
     #[cfg(unix)]
@@ -131,50 +180,96 @@ fn write(app: &AppHandle, list: &[ConnectionConfig]) -> AppResult<()> {
     Ok(())
 }
 
-pub fn upsert(app: &AppHandle, mut cfg: ConnectionConfig) -> AppResult<ConnectionConfig> {
+pub fn upsert(mut cfg: ConnectionConfig) -> AppResult<ConnectionConfig> {
     if cfg.name.trim().is_empty() {
         return Err(AppError::msg("Connection name is required"));
     }
     match cfg.password.take() {
-        Some(p) if p.is_empty() => delete_password(&cfg.id)?,
+        Some(p) if p.is_empty() => delete_secret(&cfg.id)?,
         Some(p) => entry(&cfg.id)?.set_password(&p)?,
         None => {}
     }
-    let mut list = load(app)?;
+    let ssh_account = ssh_account(&cfg.id);
+    match cfg.ssh_secret.take() {
+        Some(p) if p.is_empty() => delete_secret(&ssh_account)?,
+        Some(p) => entry(&ssh_account)?.set_password(&p)?,
+        None => {}
+    }
+    let mut list = load()?;
     match list.iter_mut().find(|c| c.id == cfg.id) {
         Some(existing) => *existing = cfg.clone(),
         None => list.push(cfg.clone()),
     }
-    write(app, &list)?;
+    write(&list)?;
     Ok(cfg)
 }
 
-pub fn remove(app: &AppHandle, id: &str) -> AppResult<()> {
-    let mut list = load(app)?;
+pub fn remove(id: &str) -> AppResult<()> {
+    let mut list = load()?;
     list.retain(|c| c.id != id);
-    write(app, &list)?;
-    delete_password(id)
+    write(&list)?;
+    delete_secret(id)?;
+    delete_secret(&ssh_account(id))
+}
+
+fn ssh_account(id: &str) -> String {
+    format!("{id}:ssh")
 }
 
 fn entry(id: &str) -> AppResult<keyring::Entry> {
     Ok(keyring::Entry::new(KEYRING_SERVICE, id)?)
 }
 
-fn delete_password(id: &str) -> AppResult<()> {
-    match entry(id)?.delete_credential() {
+fn delete_secret(account: &str) -> AppResult<()> {
+    match entry(account)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn stored(account: &str) -> AppResult<Option<String>> {
+    match entry(account)?.get_password() {
+        Ok(p) => Ok(Some(p)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        // Typically macOS denying access after the app binary changed (unsigned or
+        // updated builds), or a locked keyring on Linux.
+        Err(keyring::Error::PlatformFailure(_) | keyring::Error::NoStorageAccess(_)) => Err(AppError::msg(
+            "Your system keychain didn't allow Tabla to read the saved password. Edit this connection, \
+             re-enter the password (or SSH passphrase) and save. If your keychain is locked, unlock it first.",
+        )),
         Err(e) => Err(e.into()),
     }
 }
 
 /// Password from the request if provided, otherwise from the keychain.
 pub fn resolve_password(cfg: &ConnectionConfig) -> AppResult<Option<String>> {
-    if let Some(p) = &cfg.password {
-        return Ok(Some(p.clone()));
+    match &cfg.password {
+        Some(p) => Ok(Some(p.clone())),
+        None => stored(&cfg.id),
     }
-    match entry(&cfg.id)?.get_password() {
-        Ok(p) => Ok(Some(p)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.into()),
+}
+
+/// SSH password / key passphrase from the request, otherwise from the keychain.
+pub fn resolve_ssh_secret(cfg: &ConnectionConfig) -> AppResult<Option<String>> {
+    match &cfg.ssh_secret {
+        Some(p) => Ok(Some(p.clone())),
+        None => stored(&ssh_account(&cfg.id)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Touches the real OS keychain, so it only runs on request:
+    /// `cargo test keychain_roundtrip -- --ignored`
+    #[test]
+    #[ignore]
+    fn keychain_roundtrip() {
+        let account = "tabla-selftest";
+        entry(account).unwrap().set_password("roundtrip-value").unwrap();
+        assert_eq!(stored(account).unwrap().as_deref(), Some("roundtrip-value"));
+        delete_secret(account).unwrap();
+        assert_eq!(stored(account).unwrap(), None);
     }
 }

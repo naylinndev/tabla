@@ -4,6 +4,7 @@ import { Home } from "./components/Home";
 import { Rail, Workspace } from "./components/Workspace";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { CommandPalette } from "./components/CommandPalette";
+import { AiConnect } from "./components/AiConnect";
 import { Toasts, isMac } from "./components/ui";
 
 function useTheme() {
@@ -31,6 +32,9 @@ function useGlobalShortcuts() {
       if (k === "k" || k === "p") {
         e.preventDefault();
         st.setPalette(!st.paletteOpen);
+      } else if (k === "0") {
+        e.preventDefault();
+        st.setActiveSession(null);
       } else if (k === "t" && session) {
         e.preventDefault();
         st.newQuery(session.id);
@@ -77,6 +81,7 @@ export default function App() {
       ))}
       {editing && <ConnectionDialog key={editing.id} initial={editing} />}
       <CommandPalette />
+      <AiConnect />
       <Toasts />
     </div>
   );

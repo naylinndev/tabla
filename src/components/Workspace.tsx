@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Bot,
   Code2,
   Eye,
   FileCode2,
@@ -7,6 +8,7 @@ import {
   Layers,
   Lock,
   Moon,
+  Sparkles,
   Plus,
   Power,
   RefreshCw,
@@ -17,7 +19,8 @@ import {
   X,
 } from "lucide-react";
 import { newConnection, useApp, type Session, type Tab } from "../lib/store";
-import { DriverIcon, Logo } from "./icons";
+import { DriverIcon } from "./icons";
+import { schemaPrompt } from "../lib/ai";
 import { Kbd, TagBadge } from "./ui";
 import { TableView } from "./TableView";
 import { QueryView } from "./QueryView";
@@ -36,11 +39,17 @@ export function Rail() {
   const setEditing = useApp((s) => s.setEditing);
   const nextTheme = theme === "system" ? "dark" : theme === "dark" ? "light" : "system";
 
+  const setAiOpen = useApp((s) => s.setAiOpen);
   return (
     <nav className="rail">
-      <div className="titlebar-space drag" style={{ width: "100%" }} />
-      <button className={`rail-item ${activeId === null ? "active" : ""}`} onClick={() => setActive(null)} title="Connections">
-        {activeId === null ? <Logo size={38} /> : <Home />}
+      <div className="titlebar-space" data-tauri-drag-region style={{ width: "100%" }} />
+      <button
+        className={`rail-item rail-home ${activeId === null ? "active" : ""}`}
+        onClick={() => setActive(null)}
+        title="Home: all connections (Mod+0)"
+        aria-label="Home"
+      >
+        <Home />
       </button>
       {sessions.length > 0 && <div className="rail-sep" />}
       {sessions.map((s) => (
@@ -55,16 +64,14 @@ export function Rail() {
           <span className="rail-dot" />
         </button>
       ))}
-      <button
-        className="rail-item"
-        onClick={() => setEditing(newConnection())}
-        title="New connection"
-        style={{ background: "transparent", border: "1px dashed var(--border-strong)" }}
-      >
+      <button className="rail-item add" onClick={() => setEditing(newConnection())} title="New connection (Mod+N)">
         <Plus />
       </button>
-      <div className="spacer drag" style={{ width: "100%" }} />
-      <button className="icon-btn" onClick={() => setTheme(nextTheme)} title={`Theme: ${theme}`}>
+      <div className="spacer" data-tauri-drag-region style={{ width: "100%" }} />
+      <button className="icon-btn rail-tool" onClick={() => setAiOpen(true)} title="Connect your AI (MCP)">
+        <Bot />
+      </button>
+      <button className="icon-btn rail-tool" onClick={() => setTheme(nextTheme)} title={`Theme: ${theme}`}>
         {theme === "system" ? <SunMoon /> : theme === "dark" ? <Moon /> : <Sun />}
       </button>
     </nav>
@@ -108,6 +115,21 @@ export function Sidebar({ session }: { session: Session }) {
   const closeSession = useApp((s) => s.closeSession);
   const active = session.tabs.find((t) => t.id === session.activeTabId);
   const c = session.connection;
+  const toast = useApp((s) => s.toast);
+  const [copying, setCopying] = useState(false);
+
+  const copySchema = async () => {
+    setCopying(true);
+    try {
+      const text = await schemaPrompt(session);
+      await navigator.clipboard.writeText(text);
+      toast("Schema copied. Paste it into ChatGPT, Claude or Cursor.", "success");
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setCopying(false);
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -143,7 +165,7 @@ export function Sidebar({ session }: { session: Session }) {
 
   return (
     <aside className="sidebar">
-      <div className="titlebar-space drag" />
+      <div className="titlebar-space" data-tauri-drag-region />
       <div className="sb-head">
         <div className="sb-conn">
           <DriverIcon driver={c.driver} provider={c.provider} size={30} />
@@ -224,6 +246,9 @@ export function Sidebar({ session }: { session: Session }) {
         <button className="btn" onClick={() => newQuery(session.id)}>
           <Code2 /> New query <Kbd keys="Mod T" />
         </button>
+        <button className="icon-btn" style={{ width: 32, height: 32 }} title="Copy schema as an AI prompt" onClick={copySchema} disabled={copying}>
+          {copying ? <span className="spinner" /> : <Sparkles />}
+        </button>
       </div>
     </aside>
   );
@@ -247,7 +272,7 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
     <div className="shell" style={{ display: visible ? "flex" : "none", flex: 1, minWidth: 0 }}>
       <Sidebar session={session} />
       <main className={`main ${session.connection.tag === "production" ? "production" : ""}`}>
-        <div className="tabbar drag">
+        <div className="tabbar" data-tauri-drag-region>
           <div className="tabs-scroll" ref={tabsRef}>
             {session.tabs.map((t) => (
               <div
@@ -277,7 +302,7 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
           <button className="icon-btn" onClick={() => newQuery(session.id)} title="New query (Mod+T)">
             <Plus />
           </button>
-          <div className="spacer" style={{ height: "100%" }} />
+          <div className="spacer" data-tauri-drag-region style={{ height: "100%" }} />
         </div>
 
         {session.tabs.length === 0 && <EmptyWorkspace session={session} />}

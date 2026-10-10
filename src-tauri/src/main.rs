@@ -2,5 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    tabla_lib::run()
+    match std::env::args().nth(1).as_deref() {
+        // Headless MCP server for AI assistants.
+        Some("mcp") => tabla_lib::run_mcp(),
+        // Debug builds only: backend over localhost HTTP for browser-based UI tests.
+        #[cfg(debug_assertions)]
+        Some("bridge") => tabla_lib::run_bridge(),
+        _ => tabla_lib::run(),
+    }
 }

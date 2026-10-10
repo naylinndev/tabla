@@ -12,11 +12,19 @@ import {
   Zap,
   Command,
 } from "lucide-react";
-import { api, errorMessage, type ConnectionConfig } from "../lib/api";
+import { api, errorMessage, type ConnectionConfig, type EnvUrl } from "../lib/api";
+import { parseUrl } from "./ConnectionDialog";
+import { detectProvider } from "../lib/providers";
 import { newConnection, useApp } from "../lib/store";
 import { DriverIcon, Logo } from "./icons";
 import { providerById } from "../lib/providers";
+import { Bot, FileSearch } from "lucide-react";
 import { Kbd, Modal, TagBadge } from "./ui";
+
+/** Hides the password part of a URL for display. */
+function maskUrl(u: string) {
+  return u.replace(/(\/\/[^:/@]+:)([^@]+)(@)/, "$1••••••$3");
+}
 
 function address(c: ConnectionConfig) {
   if (c.driver === "sqlite") return c.database;
@@ -33,6 +41,36 @@ export function Home() {
   const toast = useApp((s) => s.toast);
   const [q, setQ] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<ConnectionConfig | null>(null);
+  const [envFound, setEnvFound] = useState<EnvUrl[] | null>(null);
+  const setAiOpen = useApp((s) => s.setAiOpen);
+
+  const importEnv = async () => {
+    try {
+      const found = await api.scanEnvFiles();
+      if (found === null) return;
+      if (!found.length) return toast("No database URLs found in that folder's .env files.", "info");
+      setEnvFound(found);
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    }
+  };
+
+  const useEnvUrl = (e: EnvUrl) => {
+    const parsed = parseUrl(e.url.replace(/^file:/, "sqlite://"));
+    if (!parsed) return toast(`Couldn't read ${e.key}`, "error");
+    const driver = parsed.driver!;
+    const provider = detectProvider(parsed.host ?? "", driver);
+    setEnvFound(null);
+    setEditing({
+      ...newConnection(),
+      ...parsed,
+      driver,
+      provider,
+      sslMode: parsed.sslMode ?? providerById(provider, driver).sslMode,
+      name: `${parsed.database || parsed.host || "Database"} (${e.key})`,
+      color: providerById(provider, driver).from,
+    });
+  };
 
   const list = useMemo(
     () =>
@@ -68,7 +106,7 @@ export function Home() {
 
   return (
     <div className="home">
-      <div className="titlebar-space drag" />
+      <div className="titlebar-space home-drag" data-tauri-drag-region />
       <div className="home-inner">
         <div className="hero">
           <Logo size={46} />
@@ -90,8 +128,14 @@ export function Home() {
             />
           </div>
           <div className="spacer" />
+          <button className="btn lg" onClick={() => setAiOpen(true)} title="Let Claude, Cursor and other AI tools read your databases">
+            <Bot /> Connect AI
+          </button>
+          <button className="btn lg" onClick={importEnv} title="Find DATABASE_URL and similar in a project's .env files">
+            <FileSearch /> Import from .env
+          </button>
           <button className="btn lg" onClick={openSqlite}>
-            <FolderOpen /> Open SQLite file
+            <FolderOpen /> Open SQLite
           </button>
           <button className="btn primary lg" onClick={() => setEditing(newConnection())}>
             <Plus /> New connection
@@ -106,6 +150,9 @@ export function Home() {
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button className="btn primary lg" onClick={() => setEditing(newConnection())}>
                 <Plus /> New connection
+              </button>
+              <button className="btn lg" onClick={importEnv}>
+                <FileSearch /> Import from a project's .env
               </button>
               <button className="btn lg" onClick={openSqlite}>
                 <FolderOpen /> Open SQLite file
@@ -196,6 +243,36 @@ export function Home() {
           </div>
         </div>
       </div>
+
+      {envFound && (
+        <Modal onClose={() => setEnvFound(null)}>
+          <div className="modal-head">
+            <FileSearch color="var(--accent-2)" />
+            <div>
+              <h2>Found {envFound.length} database URL{envFound.length > 1 ? "s" : ""}</h2>
+              <p>Pick one to review and save. The password goes to your keychain, not to Tabla's files.</p>
+            </div>
+          </div>
+          <div className="modal-body">
+            {envFound.map((e, i) => {
+              const parsed = parseUrl(e.url.replace(/^file:/, "sqlite://"));
+              const provider = parsed ? providerById(detectProvider(parsed.host ?? "", parsed.driver!), parsed.driver!) : null;
+              return (
+                <button key={i} className="env-item" onClick={() => useEnvUrl(e)} disabled={!parsed}>
+                  {provider && <DriverIcon driver={provider.driver} provider={provider.id} size={30} />}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="env-key">
+                      {e.key} <span className="dim">in {e.file}</span>
+                    </div>
+                    <div className="env-url">{maskUrl(e.url)}</div>
+                  </div>
+                  {provider && <span className="badge">{provider.label}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </Modal>
+      )}
 
       {confirmDelete && (
         <Modal onClose={() => setConfirmDelete(null)}>

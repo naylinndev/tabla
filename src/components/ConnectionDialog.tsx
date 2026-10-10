@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { BookOpen, CheckCircle2, ChevronDown, FolderOpen, Info, KeyRound, Link2, Lock, ShieldAlert, XCircle, Zap } from "lucide-react";
-import { api, errorMessage, type ConnectionConfig, type Driver, type EnvTag, type SslMode } from "../lib/api";
-import { useApp } from "../lib/store";
+import { Fingerprint, Network, ShieldCheck, Bot, LifeBuoy, BookOpen, CheckCircle2, ChevronDown, FolderOpen, Info, KeyRound, Link2, Lock, ShieldAlert, XCircle, Zap } from "lucide-react";
+import { api, errorMessage, type ConnectionConfig, type Driver, type EnvTag, type SshConfig, type SslMode } from "../lib/api";
+import { newConnection as newConnectionDefaults, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
-import { PROVIDERS, providerById, type Provider } from "../lib/providers";
+import { PROVIDERS, detectProvider, providerById, type Provider } from "../lib/providers";
+import { explainError } from "../lib/errorHelp";
 import { Modal, Switch } from "./ui";
 
 const COLORS = ["#7c6cff", "#5b8def", "#22b8cf", "#3ecf8e", "#f5b84b", "#ff8a4c", "#ff5d6c", "#e86bd0", "#8a909d"];
@@ -13,10 +14,11 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "staging", label: "Staging" },
   { value: "production", label: "Production" },
 ];
+type DialogTab = "connection" | "ssh" | "ssl" | "options";
 const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0 };
 
 /** Parses postgres://, mysql:// and sqlite:// URLs into form fields. */
-function parseUrl(raw: string): Partial<ConnectionConfig> | null {
+export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
   try {
     const u = new URL(raw.trim());
     const scheme = u.protocol.replace(":", "");
@@ -58,15 +60,26 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
   const open = useApp((s) => s.openConnection);
   const isNew = !useApp((s) => s.connections.some((c) => c.id === initial.id));
 
-  const [f, setF] = useState<ConnectionConfig>({ ...initial, password: undefined });
-  const [password, setPassword] = useState("");
-  const [pwTouched, setPwTouched] = useState(false);
+  const [f, setF] = useState<ConnectionConfig>({
+    ...newConnectionDefaults(),
+    ...initial,
+    ssh: { ...newConnectionDefaults().ssh, ...initial.ssh },
+    password: undefined,
+    sshSecret: undefined,
+  });
+  // A password can arrive pre-filled from a pasted/imported URL; it is only kept in memory until saved to the keychain.
+  const [password, setPassword] = useState(initial.password ?? "");
+  const [pwTouched, setPwTouched] = useState(!!initial.password);
   const [url, setUrl] = useState("");
   const [urlError, setUrlError] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; msg: string } | null>(null);
   const [busy, setBusy] = useState<"test" | "save" | null>(null);
   const [guideOpen, setGuideOpen] = useState(isNew);
+  const [tab, setTab] = useState<DialogTab>("connection");
+  const [sshSecret, setSshSecret] = useState(initial.sshSecret ?? "");
+  const [sshTouched, setSshTouched] = useState(!!initial.sshSecret);
   const provider = providerById(f.provider, f.driver);
+  const help = test && !test.ok ? explainError(test.msg, provider) : null;
 
   const set = <K extends keyof ConnectionConfig>(k: K, v: ConnectionConfig[K]) => {
     setF((x) => ({ ...x, [k]: v }));
@@ -79,6 +92,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
     name: f.name.trim() || (f.driver === "sqlite" ? f.database.split(/[\\/]/).pop() ?? "SQLite" : f.host || "Untitled"),
     // undefined keeps the keychain value; a typed value replaces it.
     password: pwTouched || isNew ? password : undefined,
+    sshSecret: sshTouched || isNew ? sshSecret : undefined,
   });
 
   const applyUrl = (raw: string) => {
@@ -91,8 +105,13 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
     setF((x) => ({
       ...x,
       ...rest,
-      // Keep a hosted preset if its engine matches; otherwise fall back to the plain engine.
-      provider: providerById(x.provider, x.driver).driver === rest.driver ? x.provider : rest.driver!,
+      // Prefer the provider the host name reveals (supabase.co, neon.tech…), else keep a matching preset.
+      provider:
+        detectProvider(rest.host ?? "", rest.driver!) !== rest.driver
+          ? detectProvider(rest.host ?? "", rest.driver!)
+          : providerById(x.provider, x.driver).driver === rest.driver
+            ? x.provider
+            : rest.driver!,
       name: x.name || rest.database || rest.host || "",
     }));
     if (pw !== undefined) {
@@ -134,14 +153,54 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
     }
   };
 
+  const tabs: { id: DialogTab; label: string; on?: boolean }[] =
+    f.driver === "sqlite"
+      ? [
+          { id: "connection", label: "Connection" },
+          { id: "options", label: "Options" },
+        ]
+      : [
+          { id: "connection", label: "Connection" },
+          { id: "ssh", label: "SSH tunnel", on: f.ssh.enabled },
+          { id: "ssl", label: "SSL", on: f.sslMode === "require" || f.sslMode === "verify-full" || !!f.sslCa },
+          { id: "options", label: "Options", on: f.readOnly || f.aiAccess || f.tag === "production" },
+        ];
+  const setSsh = <K extends keyof SshConfig>(k: K, v: SshConfig[K]) => {
+    setF((x) => ({ ...x, ssh: { ...x.ssh, [k]: v } }));
+    setTest(null);
+  };
+  const browse = async (kind: "ssh-key" | "cert", apply: (p: string) => void) => {
+    try {
+      const p = await api.pickFile(kind);
+      if (p) apply(p);
+    } catch (e) {
+      setTest({ ok: false, msg: errorMessage(e) });
+    }
+  };
+
   return (
     <Modal onClose={close} className="modal wide">
       <div className="modal-head">
-        <DriverIcon driver={f.driver} provider={f.provider} size={36} />
+        <DriverIcon driver={f.driver} provider={f.provider} size={38} />
         <div>
           <h2>{isNew ? "New connection" : `Edit ${initial.name}`}</h2>
-          <p>Passwords are stored in your system keychain, never on disk.</p>
+          <p>Passwords and SSH secrets are stored in your system keychain, never on disk.</p>
         </div>
+      </div>
+      <div className="dialog-tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={tab === t.id ? "on" : ""}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            {t.on && <span className="tab-dot" />}
+          </button>
+        ))}
       </div>
       <form
         className="modal-body"
@@ -150,6 +209,8 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           submit(true);
         }}
       >
+        {tab === "connection" && (
+          <>
         <ProviderPicker
           value={provider.id}
           onChange={(p) => {
@@ -310,8 +371,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 />
               </div>
             </div>
-            <div className="grid-2b">
-              <div className="field">
+            <div className="field">
                 <label>{f.driver === "mysql" ? "Database (optional)" : "Database"}</label>
                 <input
                   className="input mono"
@@ -321,19 +381,191 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                   spellCheck={false}
                 />
               </div>
-              <div className="field">
-                <label>SSL</label>
-                <select className="select" value={f.sslMode} onChange={(e) => set("sslMode", e.target.value as SslMode)}>
-                  <option value="prefer">Prefer</option>
-                  <option value="require">Require</option>
-                  <option value="verify-full">Verify (CA + hostname)</option>
-                  <option value="disable">Disable</option>
-                </select>
-              </div>
-            </div>
           </>
         )}
 
+            {f.ssh.enabled && f.driver !== "sqlite" && (
+              <div className="hint">
+                <Network /> Connecting through SSH {f.ssh.user || "root"}@{f.ssh.host || "server"}. The host above is
+                resolved on that server (often 127.0.0.1).
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "ssh" && (
+          <>
+            <div className="toggle-row">
+              <Network />
+              <div style={{ flex: 1 }}>
+                <b>Connect through an SSH server</b>
+                <small>
+                  Use this when the database lives on a VPS or behind a bastion host and only SSH is open to the
+                  internet.
+                </small>
+              </div>
+              <Switch on={f.ssh.enabled} onChange={(v) => setSsh("enabled", v)} label="Use SSH tunnel" />
+            </div>
+            {f.ssh.enabled && (
+              <>
+                <div className="grid-2">
+                  <div className="field">
+                    <label>SSH host</label>
+                    <input
+                      className="input mono"
+                      placeholder="203.0.113.10 or server.example.com"
+                      value={f.ssh.host}
+                      onChange={(e) => setSsh("host", e.target.value)}
+                      spellCheck={false}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>SSH port</label>
+                    <input
+                      className="input mono"
+                      inputMode="numeric"
+                      value={f.ssh.port || ""}
+                      placeholder="22"
+                      onChange={(e) => setSsh("port", +e.target.value.replace(/\D/g, "") || 0)}
+                    />
+                  </div>
+                </div>
+                <div className="field">
+                  <label>SSH user</label>
+                  <input
+                    className="input mono"
+                    placeholder="ubuntu, root, ec2-user…"
+                    value={f.ssh.user}
+                    onChange={(e) => setSsh("user", e.target.value)}
+                    spellCheck={false}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="field">
+                  <label>Sign in with</label>
+                  <div className="segmented" style={{ alignSelf: "flex-start" }}>
+                    {(
+                      [
+                        ["key", "Private key", <KeyRound key="k" />],
+                        ["agent", "SSH agent", <Fingerprint key="a" />],
+                        ["password", "Password", <Lock key="p" />],
+                      ] as const
+                    ).map(([id, label, icon]) => (
+                      <button type="button" key={id} className={f.ssh.auth === id ? "on" : ""} onClick={() => setSsh("auth", id)}>
+                        {icon} {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {f.ssh.auth === "key" && (
+                  <div className="field">
+                    <label>Private key file</label>
+                    <div className="url-row">
+                      <input
+                        className="input mono"
+                        placeholder="~/.ssh/id_ed25519"
+                        value={f.ssh.keyPath}
+                        onChange={(e) => setSsh("keyPath", e.target.value)}
+                        spellCheck={false}
+                      />
+                      <button type="button" className="btn" onClick={() => browse("ssh-key", (p) => setSsh("keyPath", p))}>
+                        <FolderOpen /> Browse
+                      </button>
+                    </div>
+                    <span className="hint">
+                      <Info /> OpenSSH, RSA, ed25519 and ECDSA keys. Tabla only stores the path, never the key.
+                    </span>
+                  </div>
+                )}
+                {f.ssh.auth !== "agent" ? (
+                  <div className="field">
+                    <label>{f.ssh.auth === "key" ? "Key passphrase (if the key has one)" : "SSH password"}</label>
+                    <input
+                      className="input mono"
+                      type="password"
+                      autoComplete="new-password"
+                      placeholder={!isNew && !sshTouched ? "Saved in keychain" : ""}
+                      value={sshSecret}
+                      onChange={(e) => {
+                        setSshSecret(e.target.value);
+                        setSshTouched(true);
+                        setTest(null);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="hint">
+                    <Info /> Uses keys loaded in your running agent (ssh-agent, 1Password, Secretive). Add one with
+                    ssh-add.
+                  </div>
+                )}
+                <div className="hint">
+                  <ShieldCheck /> The server's identity is checked against ~/.ssh/known_hosts. New servers are
+                  remembered, and Tabla refuses to connect if a server's key ever changes.
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {tab === "ssl" && (
+          <>
+            <div className="field">
+              <label>SSL mode</label>
+              <div className="ssl-modes">
+                {(
+                  [
+                    ["disable", "Disable", "No encryption. Fine for local databases."],
+                    ["prefer", "Prefer", "Encrypt if the server supports it."],
+                    ["require", "Require", "Always encrypt. Use for anything on the internet."],
+                    ["verify-full", "Verify", "Encrypt and verify the server's certificate and host name."],
+                  ] as const
+                ).map(([id, label, desc]) => (
+                  <button type="button" key={id} className={f.sslMode === id ? "on" : ""} onClick={() => set("sslMode", id)}>
+                    <b>{label}</b>
+                    <span>{desc}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(
+              [
+                ["sslCa", "CA certificate", "Server CA (.pem / .crt), for Verify with a private CA"],
+                ["sslCert", "Client certificate", "Only if your server requires client certificates"],
+                ["sslKey", "Client key", "Private key that matches the client certificate"],
+              ] as const
+            ).map(([k, label, hint]) => (
+              <div className="field" key={k}>
+                <label>{label}</label>
+                <div className="url-row">
+                  <input
+                    className="input mono"
+                    placeholder={hint}
+                    value={f[k]}
+                    onChange={(e) => set(k, e.target.value)}
+                    spellCheck={false}
+                  />
+                  {f[k] && (
+                    <button type="button" className="icon-btn" title="Clear" onClick={() => set(k, "")}>
+                      <XCircle />
+                    </button>
+                  )}
+                  <button type="button" className="btn" onClick={() => browse("cert", (p) => set(k, p))}>
+                    <FolderOpen /> Browse
+                  </button>
+                </div>
+              </div>
+            ))}
+            {f.ssh.enabled && f.sslMode === "verify-full" && (
+              <div className="hint">
+                <Info /> With an SSH tunnel, host name verification sees 127.0.0.1. Use Require instead of Verify.
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "options" && (
+          <>
         <div className="grid-2b">
           <div className="field">
             <label>Environment</label>
@@ -380,8 +612,31 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           </div>
           <Switch on={f.readOnly} onChange={(v) => set("readOnly", v)} label="Read-only" />
         </div>
+
+        <div className="toggle-row">
+          <Bot />
+          <div style={{ flex: 1 }}>
+            <b>Allow AI assistants</b>
+            <small>Let Claude, Cursor and other MCP tools read this database through Tabla. They can never write.</small>
+          </div>
+          <Switch on={f.aiAccess} onChange={(v) => set("aiAccess", v)} label="Allow AI assistants" />
+        </div>
+          </>
+        )}
         <button type="submit" hidden />
       </form>
+      {test && !test.ok && help && (
+        <div className="err-help">
+          <div className="err-help-title">
+            <LifeBuoy /> {help.title}
+          </div>
+          <ul>
+            {help.tips.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="modal-foot">
         <button className="btn" type="button" onClick={runTest} disabled={busy !== null}>
           {busy === "test" ? <span className="spinner" /> : <Zap />} Test

@@ -369,18 +369,18 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
         <div className="crumb">
           {isView ? <Eye /> : <Table2 />}
           <span className="schema">{tab.schema}</span>
-          <span className="dim">/</span>
+          <span className="dim sep">/</span>
           <span>{tab.table}</span>
         </div>
         <div className="segmented" style={{ marginLeft: 8 }}>
           <button className={tab.view === "data" ? "on" : ""} onClick={() => updateTab(session.id, tab.id, { view: "data" })}>
-            <Rows3 /> Data
+            <Rows3 /> <span className="lbl">Data</span>
           </button>
           <button
             className={tab.view === "structure" ? "on" : ""}
             onClick={() => updateTab(session.id, tab.id, { view: "structure" })}
           >
-            <TableProperties /> Structure
+            <TableProperties /> <span className="lbl">Structure</span>
           </button>
         </div>
         <div className="spacer" />
@@ -392,12 +392,12 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
               disabled={busy}
               title="Filter rows (Mod+F)"
             >
-              <ListFilter /> Filter
+              <ListFilter /> <span className="lbl">Filter</span>
               {applied && <span className="badge development">on</span>}
             </button>
             {editable && (
               <button className="btn ghost" onClick={addRow} title="Insert a new row">
-                <Plus /> Row
+                <Plus /> <span className="lbl">Row</span>
               </button>
             )}
             <button className="icon-btn" onClick={() => exportAs("csv")} title="Export page as CSV" disabled={!rows.length}>

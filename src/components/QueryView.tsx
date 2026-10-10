@@ -24,6 +24,8 @@ import { api, errorMessage, type QueryOutcome } from "../lib/api";
 import { pushHistory, readHistory, useApp, type QueryTab, type Session } from "../lib/store";
 import { resultSummary, splitStatements, statementAt, toCSV, toJSON, toTSV } from "../lib/sql";
 import { DataGrid, type Cursor } from "./DataGrid";
+import { engineLabel, schemaLines, tablesIn } from "../lib/ai";
+import { aiFixPrompt } from "../lib/errorHelp";
 import { Kbd, useDrag } from "./ui";
 
 const highlight = HighlightStyle.define([
@@ -50,6 +52,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
   const toast = useApp((s) => s.toast);
   const setColumns = useApp((s) => s.setColumns);
   const cm = useRef<ReactCodeMirrorRef>(null);
+  const lastSql = useRef("");
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const [running, setRunning] = useState(false);
@@ -110,6 +113,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
             ? view.state.sliceDoc(sel.from, sel.to)
             : statementAt(doc, sel.head);
       if (!text.trim()) return;
+      lastSql.current = text;
       setRunning(true);
       setError(null);
       const started = performance.now();
@@ -197,6 +201,20 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
 
   const history = historyOpen ? readHistory(session.connection.id) : [];
 
+  const copyForAi = async () => {
+    if (!error) return;
+    const sqlText = lastSql.current || tab.sql;
+    let schema = "";
+    try {
+      const names = tablesIn(sqlText, session);
+      schema = names.length ? await schemaLines(session, names, 10) : "";
+    } catch {
+      /* schema is optional context */
+    }
+    await navigator.clipboard.writeText(aiFixPrompt({ engine: engineLabel(session), sql: sqlText, error, schema }));
+    toast("Copied. Paste it into your AI assistant.", "success");
+  };
+
   return (
     <div className="view" hidden={!active} ref={wrapRef}>
       <div className="toolbar">
@@ -205,15 +223,15 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
           Run <Kbd keys="Mod ↵" />
         </button>
         <button className="btn" onClick={() => run("all")} disabled={running || statementCount === 0} title="Run every statement">
-          <PlayCircle /> Run all{statementCount > 1 ? ` (${statementCount})` : ""}
+          <PlayCircle /> <span className="lbl">Run all{statementCount > 1 ? ` (${statementCount})` : ""}</span>
         </button>
         <div className="divider" />
         <button className="btn ghost" onClick={doFormat} title="Format SQL (Mod+Shift+F)">
-          <Sparkles /> Format
+          <Sparkles /> <span className="lbl">Format</span>
         </button>
         <div className="spacer" />
         <button className={`btn ghost ${historyOpen ? "on" : ""}`} onClick={() => setHistoryOpen(!historyOpen)}>
-          <History /> History
+          <History /> <span className="lbl">History</span>
         </button>
       </div>
 
@@ -328,7 +346,10 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
         {error ? (
           <div className="q-error">
             <XCircle />
-            {error}
+            <div style={{ flex: 1 }}>{error}</div>
+            <button className="btn" style={{ fontFamily: "var(--font-ui)" }} onClick={copyForAi} title="Copy the query, error and related tables as a prompt">
+              <Sparkles /> Copy for AI
+            </button>
           </div>
         ) : result && result.columns.length ? (
           <DataGrid

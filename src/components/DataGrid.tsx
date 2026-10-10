@@ -37,8 +37,8 @@ interface Props {
   onCopied?(what: string): void;
 }
 
-const ROW_H = 28;
-const HEAD_H = 30;
+const ROW_H = 32;
+const HEAD_H = 34;
 const MAX_RENDER_CHARS = 400;
 
 function initialWidth(col: GridColumn, sample: (string | null | undefined)[]) {
@@ -47,7 +47,7 @@ function initialWidth(col: GridColumn, sample: (string | null | undefined)[]) {
     Math.min(col.typeName.length, 14) * 0.8 + col.name.length * 0.4,
     ...sample.map((v) => (v == null ? 4 : Math.min(v.length, 60))),
   );
-  return Math.round(Math.min(380, Math.max(76, longest * 7.3 + 30)));
+  return Math.round(Math.min(400, Math.max(80, longest * 7.6 + 34)));
 }
 
 function CellValue({ v, type }: { v: string | null | undefined; type: string }) {

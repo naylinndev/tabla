@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { ArrowDownUp, CornerDownLeft, Code2, Eye, Home, Moon, Plug, Plus, Power, Sun, Table2 } from "lucide-react";
+import { Bot, ArrowDownUp, CornerDownLeft, Code2, Eye, Home, Moon, Plug, Plus, Power, Sun, Table2 } from "lucide-react";
 import { newConnection, useActiveSession, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { Modal } from "./ui";
@@ -20,7 +20,7 @@ export function CommandPalette() {
 
   return (
     <Modal onClose={() => setOpen(false)} className="palette">
-      <Command label="Command palette" loop>
+      <Command label="Command palette" loop filter={paletteFilter}>
         <Command.Input autoFocus placeholder={session ? `Search tables in ${session.schema}, actions, connections…` : "Search connections and actions…"} />
         <Command.List>
           <Command.Empty>Nothing found.</Command.Empty>
@@ -55,6 +55,9 @@ export function CommandPalette() {
             )}
             <Command.Item value="new connection add" onSelect={() => run(() => st().setEditing(newConnection()))}>
               <Plus /> New connection
+            </Command.Item>
+            <Command.Item value="connect ai assistant mcp claude cursor" onSelect={() => run(() => st().setAiOpen(true))}>
+              <Bot /> Connect your AI (MCP)
             </Command.Item>
             <Command.Item value="home connections" onSelect={() => run(() => st().setActiveSession(null))}>
               <Home /> Go to connections
@@ -99,4 +102,21 @@ export function CommandPalette() {
       </Command>
     </Modal>
   );
+}
+
+/**
+ * Substring matches rank above loose fuzzy matches, word-prefix matches rank
+ * highest, and destructive actions (disconnect) never match fuzzily, so
+ * typing a table name can't land on "Disconnect".
+ */
+function paletteFilter(value: string, search: string): number {
+  const v = value.toLowerCase();
+  const q = search.toLowerCase().trim();
+  if (!q) return 1;
+  const at = v.indexOf(q);
+  if (at >= 0) return at === 0 || v[at - 1] === " " ? 1 : 0.8;
+  if (v.startsWith("disconnect")) return 0;
+  let j = 0;
+  for (const ch of v) if (ch === q[j]) j++;
+  return j === q.length ? 0.1 : 0;
 }
