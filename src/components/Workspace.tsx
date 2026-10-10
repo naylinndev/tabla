@@ -28,26 +28,22 @@ import { schemaPrompt } from "../lib/ai";
 import { Kbd, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
+import { AppearanceMenu } from "./Dialogs";
 import { UsersView } from "./UsersView";
 import { Select } from "./controls";
 import { TableView } from "./TableView";
 import { QueryView } from "./QueryView";
 
-function initials(name: string) {
-  const parts = name.trim().split(/[\s_-]+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "?") + (parts[1]?.[0] ?? parts[0]?.[1] ?? "")).toUpperCase();
-}
 
 export function Rail() {
   const sessions = useApp((s) => s.sessions);
   const activeId = useApp((s) => s.activeSessionId);
   const setActive = useApp((s) => s.setActiveSession);
   const theme = useApp((s) => s.theme);
-  const setTheme = useApp((s) => s.setTheme);
   const setEditing = useApp((s) => s.setEditing);
-  const nextTheme = theme === "system" ? "dark" : theme === "dark" ? "light" : "system";
 
   const setAiOpen = useApp((s) => s.setAiOpen);
+  const [appearance, setAppearance] = useState(false);
   return (
     <nav className="rail">
       <div className="titlebar-space" data-tauri-drag-region style={{ width: "100%" }} />
@@ -61,16 +57,19 @@ export function Rail() {
       </button>
       {sessions.length > 0 && <div className="rail-sep" />}
       {sessions.map((s) => (
-        <button
-          key={s.id}
-          className={`rail-item ${s.id === activeId ? "active" : ""}`}
-          style={s.id === activeId ? { background: s.connection.color } : undefined}
-          onClick={() => setActive(s.id)}
-          title={s.connection.name}
-        >
-          {initials(s.connection.name)}
-          <span className="rail-dot" />
-        </button>
+        <div key={s.id} className={`rail-conn ${s.id === activeId ? "active" : ""}`} title={`${s.connection.name} · ${s.connection.host || s.connection.database}`}>
+          <button
+            className={`rail-item conn ${s.id === activeId ? "active" : ""}`}
+            style={{ "--c": s.connection.color } as React.CSSProperties}
+            onClick={() => setActive(s.id)}
+            aria-label={s.connection.name}
+          >
+            <DriverIcon driver={s.connection.driver} provider={s.connection.provider} size={30} />
+            <span className="rail-dot" />
+            {s.connection.tag === "production" && <span className="rail-prod" />}
+          </button>
+          <span className="rail-name">{s.connection.name}</span>
+        </div>
       ))}
       <button className="rail-item add" onClick={() => setEditing(newConnection())} title="New connection (Mod+N)">
         <Plus />
@@ -79,9 +78,12 @@ export function Rail() {
       <button className="icon-btn rail-tool" onClick={() => setAiOpen(true)} title="Connect your AI (MCP)">
         <Bot />
       </button>
-      <button className="icon-btn rail-tool" onClick={() => setTheme(nextTheme)} title={`Theme: ${theme}`}>
-        {theme === "system" ? <SunMoon /> : theme === "dark" ? <Moon /> : <Sun />}
-      </button>
+      <div style={{ position: "relative" }}>
+        <button className={`icon-btn rail-tool ${appearance ? "on" : ""}`} onClick={() => setAppearance(!appearance)} title="Appearance: theme and font">
+          {theme === "system" ? <SunMoon /> : theme === "dark" ? <Moon /> : <Sun />}
+        </button>
+        {appearance && <AppearanceMenu onClose={() => setAppearance(false)} />}
+      </div>
     </nav>
   );
 }
@@ -120,7 +122,6 @@ export function Sidebar({ session }: { session: Session }) {
   const setSchema = useApp((s) => s.setSchema);
   const refresh = useApp((s) => s.refreshTables);
   const newQuery = useApp((s) => s.newQuery);
-  const closeSession = useApp((s) => s.closeSession);
   const active = session.tabs.find((t) => t.id === session.activeTabId);
   const c = session.connection;
   const toast = useApp((s) => s.toast);
@@ -210,7 +211,7 @@ export function Sidebar({ session }: { session: Session }) {
             </div>
           </div>
           <TagBadge tag={c.tag} />
-          <button className="icon-btn" title="Disconnect" onClick={() => closeSession(session.id)}>
+          <button className="icon-btn" title="Disconnect" onClick={() => useApp.getState().requestDisconnect(session.id)}>
             <Power />
           </button>
         </div>

@@ -53,7 +53,7 @@ export function CommandPalette() {
                 <Command.Item value="refresh tables reload" onSelect={() => run(() => st().refreshTables(session.id))}>
                   <ArrowDownUp /> Refresh table list
                 </Command.Item>
-                <Command.Item value="disconnect close connection" onSelect={() => run(() => st().closeSession(session.id))}>
+                <Command.Item value="disconnect close connection" onSelect={() => run(() => st().requestDisconnect(session.id))}>
                   <Power /> Disconnect {session.connection.name}
                 </Command.Item>
               </>

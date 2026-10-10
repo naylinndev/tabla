@@ -36,6 +36,7 @@ export interface Toast {
 }
 
 export type Theme = "system" | "dark" | "light";
+export type FontChoice = "geist" | "arimo" | "inter" | "system";
 
 interface State {
   connections: ConnectionConfig[];
@@ -43,6 +44,11 @@ interface State {
   activeSessionId: string | null;
   connecting: string | null;
   theme: Theme;
+  font: FontChoice;
+  /** Uncommitted edits per tab ("sessionId:tabId" -> count), for close/disconnect warnings. */
+  pending: Record<string, number>;
+  /** A confirmation the user must answer (disconnect, close a tab with edits). */
+  confirm: { kind: "disconnect"; sessionId: string } | { kind: "closeTab"; sessionId: string; tabId: string } | null;
   paletteOpen: boolean;
   aiOpen: boolean;
   editing: ConnectionConfig | null;
@@ -61,9 +67,14 @@ interface State {
   newQuery(sessionId: string, sql?: string): void;
   openUsers(sessionId: string): void;
   updateTab(sessionId: string, tabId: string, patch: Partial<Tab>): void;
-  closeTab(sessionId: string, tabId: string): void;
+  /** Asks first if the tab has uncommitted edits, unless `force`. */
+  closeTab(sessionId: string, tabId: string, force?: boolean): void;
+  requestDisconnect(sessionId: string): void;
+  setConfirm(c: State["confirm"]): void;
   setActiveTab(sessionId: string, tabId: string): void;
   setTheme(t: Theme): void;
+  setFont(f: FontChoice): void;
+  setPending(sessionId: string, tabId: string, count: number): void;
   setPalette(open: boolean): void;
   setAiOpen(open: boolean): void;
   setEditing(c: ConnectionConfig | null): void;
@@ -127,6 +138,9 @@ export const useApp = create<State>((set, get) => {
     activeSessionId: null,
     connecting: null,
     theme: local.get<Theme>("tabla.theme", "system"),
+    font: local.get<FontChoice>("tabla.font", "geist"),
+    pending: {},
+    confirm: null,
     paletteOpen: false,
     aiOpen: false,
     editing: null,
@@ -277,7 +291,19 @@ export const useApp = create<State>((set, get) => {
       if (s) saveDrafts(s);
     },
 
-    closeTab(sessionId, tabId) {
+    requestDisconnect(sessionId) {
+      set({ confirm: { kind: "disconnect", sessionId } });
+    },
+
+    setConfirm(confirm) {
+      set({ confirm });
+    },
+
+    closeTab(sessionId, tabId, force = false) {
+      if (!force && get().pending[`${sessionId}:${tabId}`]) {
+        set({ confirm: { kind: "closeTab", sessionId, tabId } });
+        return;
+      }
       patchSession(sessionId, (s) => {
         const idx = s.tabs.findIndex((t) => t.id === tabId);
         const tabs = s.tabs.filter((t) => t.id !== tabId);
@@ -296,6 +322,22 @@ export const useApp = create<State>((set, get) => {
     setTheme(theme) {
       local.set("tabla.theme", theme);
       set({ theme });
+    },
+
+    setFont(font) {
+      local.set("tabla.font", font);
+      set({ font });
+    },
+
+    setPending(sessionId, tabId, count) {
+      const key = `${sessionId}:${tabId}`;
+      if ((get().pending[key] ?? 0) === count) return;
+      set((st) => {
+        const pending = { ...st.pending };
+        if (count) pending[key] = count;
+        else delete pending[key];
+        return { pending };
+      });
     },
 
     setPalette(paletteOpen) {

@@ -1,7 +1,8 @@
 /* ───────────────────────── Tokens ───────────────────────── */
 :root {
-  --font-ui: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --font-ui: "Geist Variable", "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ui-tracking: -0.003em;
 
   --radius-sm: 7px;
   --radius: 10px;
@@ -65,9 +66,9 @@
   --rail: #ebebf0;
   --border: rgba(14, 16, 26, 0.08);
   --border-strong: rgba(14, 16, 26, 0.14);
-  --text: #15171c;
-  --text-2: #4b5261;
-  --text-3: #8a909d;
+  --text: #111318;
+  --text-2: #3d4350;
+  --text-3: #6f7583;
   --accent: #6352f5;
   --accent-2: #7a6bff;
   --accent-soft: rgba(99, 82, 245, 0.1);
@@ -99,8 +100,9 @@
   --rail: rgba(8, 9, 12, 0.55);
 }
 :root.mac[data-theme="light"] {
-  --sidebar: rgba(245, 245, 248, 0.6);
-  --rail: rgba(232, 232, 238, 0.6);
+  /* Mostly opaque: the vibrancy hint stays, but text keeps its contrast over any wallpaper. */
+  --sidebar: rgba(246, 246, 249, 0.92);
+  --rail: rgba(236, 236, 241, 0.94);
 }
 
 /* ───────────────────────── Base ───────────────────────── */
@@ -3709,4 +3711,160 @@ pre.grants {
   width: 28px;
   height: 28px;
   margin: 0;
+}
+
+/* Font choices (Appearance menu) */
+:root[data-font="arimo"] {
+  --font-ui: "Arimo", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ui-tracking: 0;
+}
+:root[data-font="inter"] {
+  --font-ui: "Inter Variable", system-ui, sans-serif;
+  --ui-tracking: -0.006em;
+}
+:root[data-font="system"] {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  --ui-tracking: 0;
+}
+/* Names in structure, relations and Redis read better in the UI font. */
+.sg-in,
+.sg .mono,
+.sb-item.rkey .name,
+.csv-src {
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+.sg-in.mono {
+  font-size: 13px;
+}
+
+/* Appearance menu */
+.appearance {
+  position: absolute;
+  left: 46px;
+  bottom: 0;
+  z-index: 60;
+  width: 300px;
+  padding: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-elev-2) 88%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  backdrop-filter: blur(24px) saturate(1.6);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-pop);
+  animation: menu-in 0.12s ease-out;
+}
+.ap-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ap-themes {
+  display: flex;
+  width: 100%;
+}
+.ap-themes button {
+  flex: 1;
+  justify-content: center;
+}
+.ap-font {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+.ap-font:hover {
+  background: var(--hover);
+}
+.ap-font.on {
+  background: var(--accent-soft);
+}
+.ap-font b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ap-font small {
+  display: block;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.ap-check {
+  width: 16px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-2);
+}
+.ap-check svg {
+  width: 14px;
+  height: 14px;
+}
+.ap-sample {
+  margin-left: auto;
+  font-size: 17px;
+  color: var(--text-2);
+}
+
+/* Rail: one tile per open connection, with its engine and name */
+.rail-conn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+}
+.rail-item.conn {
+  background: transparent;
+  box-shadow: 0 0 0 1.5px transparent;
+}
+.rail-item.conn.active {
+  background: color-mix(in srgb, var(--c) 18%, transparent);
+  box-shadow: 0 0 0 1.5px var(--c);
+}
+.rail-item.conn svg {
+  width: 30px;
+  height: 30px;
+}
+.rail-name {
+  max-width: 56px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--text-3);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rail-conn.active .rail-name {
+  color: var(--text);
+}
+.rail-prod {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--rail);
+  background: var(--danger);
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  display: inline-block;
 }

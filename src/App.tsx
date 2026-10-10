@@ -5,6 +5,7 @@ import { Rail, Workspace } from "./components/Workspace";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { AiConnect } from "./components/AiConnect";
+import { ConfirmDialogs } from "./components/Dialogs";
 import { RedisWorkspace } from "./components/RedisWorkspace";
 import { Toasts, isMac } from "./components/ui";
 
@@ -20,6 +21,13 @@ function useTheme() {
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, [theme]);
+}
+
+function useFont() {
+  const font = useApp((s) => s.font);
+  useEffect(() => {
+    document.documentElement.dataset.font = font;
+  }, [font]);
 }
 
 function useGlobalShortcuts() {
@@ -68,6 +76,7 @@ export default function App() {
   const loadConnections = useApp((s) => s.loadConnections);
 
   useTheme();
+  useFont();
   useGlobalShortcuts();
   useEffect(() => {
     loadConnections();
@@ -85,6 +94,7 @@ export default function App() {
         ),
       )}
       {editing && <ConnectionDialog key={editing.id} initial={editing} />}
+      <ConfirmDialogs />
       <CommandPalette />
       <AiConnect />
       <Toasts />

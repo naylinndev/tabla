@@ -127,6 +127,11 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
 
   const changeCount =
     Object.values(edits).reduce((n, r) => n + Object.keys(r).length, 0) + deleted.size + inserted.length;
+  const setPending = useApp((s) => s.setPending);
+  useEffect(() => {
+    setPending(session.id, tab.id, changeCount);
+    return () => setPending(session.id, tab.id, 0);
+  }, [session.id, tab.id, changeCount, setPending]);
 
   const load = useCallback(
     async (opts?: { offset?: number }) => {

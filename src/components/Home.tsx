@@ -34,6 +34,8 @@ function address(c: ConnectionConfig) {
 export function Home() {
   const connections = useApp((s) => s.connections);
   const connecting = useApp((s) => s.connecting);
+  const sessions = useApp((s) => s.sessions);
+  const openIds = useMemo(() => new Set(sessions.map((s) => s.connection.id)), [sessions]);
   const open = useApp((s) => s.openConnection);
   const setEditing = useApp((s) => s.setEditing);
   const save = useApp((s) => s.saveConnection);
@@ -179,6 +181,11 @@ export function Home() {
                   </div>
                 </div>
                 <div className="foot">
+                  {openIds.has(c.id) && (
+                    <span className="badge local">
+                      <span className="live-dot" /> connected
+                    </span>
+                  )}
                   <span className="badge">{providerById(c.provider, c.driver).label}</span>
                   <TagBadge tag={c.tag} />
                   {c.readOnly && (

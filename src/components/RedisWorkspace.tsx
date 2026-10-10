@@ -53,7 +53,6 @@ const DANGER = /^(FLUSHALL|FLUSHDB|SHUTDOWN|DEBUG|CONFIG|SWAPDB|MIGRATE|REPLICAO
 
 export function RedisWorkspace({ session, visible }: { session: Session; visible: boolean }) {
   const toast = useApp((s) => s.toast);
-  const closeSession = useApp((s) => s.closeSession);
   const c = session.connection;
   const prod = c.tag === "production";
   const [db, setDb] = useState(+(session.schema || 0));
@@ -141,7 +140,7 @@ export function RedisWorkspace({ session, visible }: { session: Session; visible
               </div>
             </div>
             <TagBadge tag={c.tag} />
-            <button className="icon-btn" title="Disconnect" onClick={() => closeSession(session.id)}>
+            <button className="icon-btn" title="Disconnect" onClick={() => useApp.getState().requestDisconnect(session.id)}>
               <Power />
             </button>
           </div>
