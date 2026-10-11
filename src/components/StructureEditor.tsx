@@ -5,6 +5,8 @@ import { useApp, type Session } from "../lib/store";
 import { joinType, splitType } from "../lib/format";
 import { Modal } from "./ui";
 import { Checkbox, Combobox } from "./controls";
+import { SqlConfirm } from "./SqlConfirm";
+import { quoteIdent } from "../lib/sql";
 
 interface Draft {
   key: string;
@@ -77,6 +79,9 @@ export function StructureEditor({
   const [plan, setPlan] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selIndex, setSelIndex] = useState<string | null>(null);
+  const [addingIndex, setAddingIndex] = useState(false);
+  const [droppingIndex, setDroppingIndex] = useState<string | null>(null);
 
   useEffect(() => {
     if (structure) setDrafts(fromStructure(structure, viewOrder));
@@ -338,7 +343,7 @@ export function StructureEditor({
           </div>
           {structure.indexes.length === 0 && <div className="sg-empty">No indexes</div>}
           {structure.indexes.map((i) => (
-            <div key={i.name} className="sg-row" role="row" title={i.definition}>
+            <div key={i.name} className={`sg-row ${selIndex === i.name ? "sel" : ""}`} role="row" title={i.definition} onMouseDown={() => setSelIndex(i.name)}>
               <span className="mono strong ellipsis">{i.name}</span>
               <span className="mono ellipsis">{i.columns}</span>
               <span className="c">{i.unique && <Check className="ok-ico" />}</span>
@@ -353,12 +358,42 @@ export function StructureEditor({
           ))}
         </div>
         <div className="sg-bar">
+          <button className="icon-btn" title="Add index" disabled={!editable} onClick={() => setAddingIndex(true)}>
+            <Plus />
+          </button>
+          <button
+            className="icon-btn"
+            title="Drop selected index"
+            disabled={!editable || !selIndex || structure.indexes.find((i) => i.name === selIndex)?.primary}
+            onClick={() => setDroppingIndex(selIndex)}
+          >
+            <Minus />
+          </button>
           <span className="sg-count">
             {structure.indexes.length} index{structure.indexes.length === 1 ? "" : "es"}
           </span>
         </div>
       </section>
 
+      {addingIndex && (
+        <AddIndexDialog session={session} schema={schema} table={table} columns={structure.columns.map((c) => c.name)} onClose={() => setAddingIndex(false)} onDone={onApplied} />
+      )}
+      {droppingIndex && (
+        <SqlConfirm
+          session={session}
+          title={`Drop index ${droppingIndex}`}
+          description="Queries that relied on it may get slower. Data is not changed."
+          statements={[
+            driver === "mysql"
+              ? `DROP INDEX ${quoteIdent(driver, droppingIndex)} ON ${quoteIdent(driver, schema)}.${quoteIdent(driver, table)}`
+              : `DROP INDEX ${quoteIdent(driver, schema)}.${quoteIdent(driver, droppingIndex)}`,
+          ]}
+          danger
+          confirmLabel="Drop index"
+          onDone={onApplied}
+          onClose={() => setDroppingIndex(null)}
+        />
+      )}
       {plan && (
         <Modal onClose={() => setPlan(null)} className="modal wide">
           <div className="modal-head">
@@ -406,5 +441,67 @@ export function StructureEditor({
         </Modal>
       )}
     </div>
+  );
+}
+
+function AddIndexDialog({
+  session,
+  schema,
+  table,
+  columns,
+  onClose,
+  onDone,
+}: {
+  session: Session;
+  schema: string;
+  table: string;
+  columns: string[];
+  onClose(): void;
+  onDone(): void;
+}) {
+  const d = session.connection.driver;
+  const [picked, setPicked] = useState<string[]>([]);
+  const [unique, setUnique] = useState(false);
+  const [name, setName] = useState("");
+  const idxName = name.trim() || `${unique ? "uq" : "idx"}_${table}_${picked.join("_")}`.slice(0, 60);
+  const q = (x: string) => quoteIdent(d, x);
+  // SQLite qualifies the index name with the schema; the others qualify the table.
+  const target = d === "sqlite" ? `${q(schema)}.${q(idxName)} ON ${q(table)}` : `${q(idxName)} ON ${q(schema)}.${q(table)}`;
+  const stmt = picked.length ? `CREATE ${unique ? "UNIQUE " : ""}INDEX ${target} (${picked.map(q).join(", ")})` : "";
+  return (
+    <SqlConfirm
+      session={session}
+      title="Add index"
+      description="Speeds up lookups and sorting on these columns. Unique also forbids duplicate values."
+      statements={stmt ? [stmt] : []}
+      displayStatements={stmt ? [stmt] : ["-- Pick at least one column"]}
+      confirmLabel="Create index"
+      onDone={onDone}
+      onClose={onClose}
+    >
+      <div className="field">
+        <label>Columns, in order (click to add)</label>
+        <div className="idx-cols">
+          {columns.map((c) => {
+            const pos = picked.indexOf(c);
+            return (
+              <button key={c} type="button" className={`idx-col ${pos >= 0 ? "on" : ""}`} onClick={() => setPicked((p) => (pos >= 0 ? p.filter((x) => x !== c) : [...p, c]))}>
+                {pos >= 0 && <span className="idx-pos">{pos + 1}</span>}
+                {c}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="grid-2b">
+        <div className="field">
+          <label>Index name</label>
+          <input className="input mono" placeholder={idxName} value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} />
+        </div>
+        <div className="field" style={{ justifyContent: "flex-end" }}>
+          <Checkbox checked={unique} onChange={setUnique} label="Unique" />
+        </div>
+      </div>
+    </SqlConfirm>
   );
 }

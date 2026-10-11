@@ -28,6 +28,7 @@ import { schemaPrompt } from "../lib/ai";
 import { Kbd, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
+import { CreateTableDialog } from "./CreateTable";
 import { AppearanceMenu } from "./Dialogs";
 import { UsersView } from "./UsersView";
 import { Select } from "./controls";
@@ -144,6 +145,7 @@ export function Sidebar({ session }: { session: Session }) {
   const c = session.connection;
   const toast = useApp((s) => s.toast);
   const [copying, setCopying] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [width, setWidth] = useState(() => local.get("tabla.sidebarWidth", 272));
   const startW = useRef(width);
   const saveWidth = (w: number) => {
@@ -205,6 +207,7 @@ export function Sidebar({ session }: { session: Session }) {
   return (
     <aside className="sidebar" style={{ width }}>
       {tableMenu.element}
+      {creating && <CreateTableDialog session={session} onClose={() => setCreating(false)} />}
       <div
         className={`sb-resize ${resize.active ? "on" : ""}`}
         onMouseDown={(e) => {
@@ -268,6 +271,11 @@ export function Sidebar({ session }: { session: Session }) {
         <div className="sb-section">
           Tables <span className="count">{tables.length}</span>
           <div className="spacer" />
+          {!c.readOnly && (
+            <button className="icon-btn" style={{ width: 20, height: 20 }} title="Create table" onClick={() => setCreating(true)}>
+              <Plus size={12} />
+            </button>
+          )}
           <button
             className="icon-btn"
             style={{ width: 20, height: 20 }}

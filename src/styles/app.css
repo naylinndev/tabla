@@ -3940,3 +3940,40 @@ pre.grants {
   user-select: all;
   word-break: break-all;
 }
+
+/* Create table + add index */
+.sg.ct .sg-row {
+  grid-template-columns: 28px minmax(130px, 1.2fr) minmax(140px, 1.2fr) 64px 72px 50px minmax(110px, 1fr) 36px;
+  min-width: 660px;
+}
+.idx-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.idx-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  font-size: 13px;
+}
+.idx-col.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.idx-pos {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
