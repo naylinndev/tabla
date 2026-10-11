@@ -5,13 +5,17 @@
    on that repo only.
 3. In this repo, go to **Settings → Secrets and variables → Actions** and add it
    as **`HOMEBREW_TAP_TOKEN`**.
-4. Tag a release: `git tag v0.1.0 && git push origin v0.1.0`.
+4. Run the **Release** workflow (Actions → Release → Run workflow) with the
+   version from `tauri.conf.json`, e.g. `0.1.0`.
 
-The release workflow builds the DMGs, attaches them to a draft release, and
-writes `Casks/tabla.rb` into the tap. After you publish the release:
+The workflow builds every installer and attaches them to a draft release.
+**Publishing** the draft writes `Casks/tabla.rb` into the tap (nothing is
+rebuilt). If the token wasn't set yet when you published, run the workflow again
+with the same version and **Homebrew only** ticked. Then:
 
 ```bash
-brew install --cask naylinndev/tabla/tabla
+brew tap naylinndev/tabla
+brew install --cask tabla
 ```
 
 ## Signing (recommended)

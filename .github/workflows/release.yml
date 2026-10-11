@@ -15,6 +15,10 @@ on:
       version:
         description: "Version to release, e.g. 0.1.0 (must match tauri.conf.json)"
         required: true
+      homebrew_only:
+        description: "Only update the Homebrew cask for this already-published version"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -22,7 +26,7 @@ permissions:
 jobs:
   build:
     # Publishing a release only updates Homebrew; the installers already exist.
-    if: github.event_name != 'release'
+    if: github.event_name != 'release' && !inputs.homebrew_only
     strategy:
       fail-fast: false
       matrix:
@@ -122,21 +126,22 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # Only once the release is published: a draft's files can't be downloaded by tag.
-    if: always() && github.event_name == 'release' && startsWith(github.ref_name, 'v')
+    if: always() && (github.event_name == 'release' || inputs.homebrew_only)
     steps:
       - uses: actions/checkout@v5
       - name: Update the Homebrew cask
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          TAG: ${{ github.event_name == 'release' && github.ref_name || format('v{0}', inputs.version) }}
         run: |
           if [ -z "$TAP_TOKEN" ]; then
             echo "HOMEBREW_TAP_TOKEN is not set; skipping the cask update."
             exit 0
           fi
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           mkdir dl
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "*.dmg" --dir dl
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.dmg" --dir dl
           ARM=$(sha256sum "dl/Tabla_${VERSION}_aarch64.dmg" | cut -d' ' -f1)
           INTEL=$(sha256sum "dl/Tabla_${VERSION}_x64.dmg" | cut -d' ' -f1)
           sed -e "s/__VERSION__/${VERSION}/" -e "s/__SHA_ARM__/${ARM}/" -e "s/__SHA_INTEL__/${INTEL}/" \
@@ -149,4 +154,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Casks/tabla.rb
           git commit -m "tabla ${VERSION}" || exit 0
-          git push
+          git push origin HEAD
