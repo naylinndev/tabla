@@ -323,6 +323,24 @@ impl MongoSession {
         Ok(deleted)
     }
 
+    /// Top-level fields seen in a sample of documents, with their BSON types.
+    pub async fn sample_fields(&self, db: &str, collection: &str, n: i64) -> AppResult<Vec<(String, Vec<String>)>> {
+        let coll = self.client.database(db).collection::<Document>(collection);
+        let docs: Vec<Document> = coll.find(doc! {}).limit(n).max_time(Duration::from_secs(10)).await.map_err(m)?.try_collect().await.map_err(m)?;
+        let mut out: Vec<(String, Vec<String>)> = Vec::new();
+        for d in &docs {
+            for (k, v) in d {
+                let t = format!("{:?}", v.element_type());
+                match out.iter_mut().find(|(f, _)| f == k) {
+                    Some((_, types)) if !types.contains(&t) => types.push(t),
+                    Some(_) => {}
+                    None => out.push((k.clone(), vec![t])),
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub async fn indexes(&self, db: &str, collection: &str) -> AppResult<Vec<IndexInfo>> {
         let mut cur = self.client.database(db).collection::<Document>(collection).list_indexes().await.map_err(m)?;
         let mut out = Vec::new();
@@ -528,6 +546,44 @@ fn is_read_command(name: &str, cmd: &Document) -> bool {
     let n = name.to_ascii_lowercase();
     READ_COMMANDS.contains(&n.as_str())
         || (n == "aggregate" && !cmd.get_array("pipeline").map(|p| pipeline_writes(&[Bson::Array(p.clone())])).unwrap_or(false))
+}
+
+/// What AI assistants (MCP) may run: plain reads only. Stricter than the
+/// shell's read list, which also allows commands that reveal other sessions'
+/// queries, server options or user records.
+pub fn ai_check(line: &str) -> AppResult<()> {
+    const COMMANDS: &[&str] = &["ping", "buildinfo", "hello", "dbstats", "collstats", "listcollections", "listindexes", "count", "distinct", "find", "aggregate"];
+    const METHODS: &[&str] = &["find", "findOne", "aggregate", "countDocuments", "estimatedDocumentCount", "distinct", "getIndexes", "stats"];
+    let line = line.trim().trim_end_matches(';').trim();
+    let lower = line.to_ascii_lowercase();
+    if matches!(lower.as_str(), "show dbs" | "show databases" | "show collections" | "show tables") {
+        return Ok(());
+    }
+    let (name, stages) = if line.starts_with('{') {
+        let cmd = parse_doc(line)?;
+        let name = cmd.keys().next().cloned().unwrap_or_default();
+        if !COMMANDS.contains(&name.to_ascii_lowercase().as_str()) {
+            return Err(AppError::msg(format!("`{name}` is not allowed. AI access is read-only: use find, aggregate, countDocuments, distinct, getIndexes or stats.")));
+        }
+        (name, cmd.get_array("pipeline").ok().cloned())
+    } else {
+        let call = parse_call(line)?;
+        if !METHODS.contains(&call.method.as_str()) {
+            return Err(AppError::msg(format!(".{}() is not allowed. AI access is read-only: use find, aggregate, countDocuments, distinct, getIndexes or stats.", call.method)));
+        }
+        let stages = match call.args.first() {
+            Some(Bson::Array(a)) if call.method == "aggregate" => Some(a.clone()),
+            _ => None,
+        };
+        (call.method, stages)
+    };
+    let blocked = ["$out", "$merge", "$currentOp", "$listSessions", "$listLocalSessions"];
+    if let Some(stages) = stages {
+        if let Some(st) = stages.iter().filter_map(Bson::as_document).find_map(|d| blocked.iter().find(|b| d.contains_key(**b))) {
+            return Err(AppError::msg(format!("The {st} stage is not allowed in `{name}`: AI access is read-only")));
+        }
+    }
+    Ok(())
 }
 
 /// $out and $merge stages write.
@@ -814,6 +870,22 @@ mod unit_tests {
         let c = parse_call("db.o.aggregate([{$match: {s: 'a)b'}}, {$out: 'x'}])").unwrap();
         assert!(pipeline_writes(&c.args));
         assert!(parse_call("users.find()").is_err());
+    }
+
+    #[test]
+    fn ai_reads_only() {
+        assert!(ai_check("db.users.find({a: 1}).limit(5)").is_ok());
+        assert!(ai_check("db.o.aggregate([{$group: {_id: '$s'}}])").is_ok());
+        assert!(ai_check("{dbStats: 1}").is_ok());
+        assert!(ai_check("show collections").is_ok());
+        assert!(ai_check("db.users.deleteMany({})").is_err());
+        assert!(ai_check("db.users.drop()").is_err());
+        assert!(ai_check("db.o.aggregate([{$match: {}}, {$merge: 'x'}])").is_err());
+        assert!(ai_check("{aggregate: 'o', pipeline: [{$out: 'x'}], cursor: {}}").is_err());
+        assert!(ai_check("db.o.aggregate([{$currentOp: {}}])").is_err());
+        assert!(ai_check("{usersInfo: 1, showCredentials: true}").is_err());
+        assert!(ai_check("{getCmdLineOpts: 1}").is_err());
+        assert!(ai_check("{dropDatabase: 1}").is_err());
     }
 
     #[test]

@@ -197,6 +197,18 @@ pub fn is_write_command(cmd: &str) -> bool {
     !READS.contains(&cmd.to_ascii_uppercase().as_str())
 }
 
+/// What AI assistants (MCP) may run: reads of keys and server stats only.
+/// No CLIENT, CONFIG, SLOWLOG, KEYS (blocks the server) or SELECT.
+pub fn ai_allowed(cmd: &str) -> bool {
+    const READS: &[&str] = &[
+        "GET", "MGET", "STRLEN", "GETRANGE", "EXISTS", "TYPE", "TTL", "PTTL", "SCAN", "HGET", "HMGET", "HGETALL", "HKEYS",
+        "HVALS", "HLEN", "HSCAN", "HEXISTS", "LRANGE", "LLEN", "LINDEX", "SMEMBERS", "SCARD", "SISMEMBER", "SSCAN", "ZRANGE",
+        "ZRANGEBYSCORE", "ZREVRANGE", "ZCARD", "ZSCORE", "ZRANK", "ZSCAN", "XRANGE", "XREVRANGE", "XLEN", "XINFO", "INFO",
+        "PING", "DBSIZE", "PFCOUNT", "GEOPOS", "GEODIST", "BITCOUNT", "GETBIT", "JSON.GET", "JSON.TYPE", "FT.SEARCH", "FT.INFO",
+    ];
+    READS.contains(&cmd.to_ascii_uppercase().as_str())
+}
+
 pub fn is_dangerous(cmd: &str) -> bool {
     matches!(
         cmd.to_ascii_uppercase().as_str(),
@@ -542,6 +554,10 @@ mod tests {
         assert!(is_write_command("flushall"));
         assert!(is_dangerous("FLUSHDB"));
         assert!(!is_dangerous("GET"));
+        assert!(ai_allowed("hgetall"));
+        for c in ["SET", "DEL", "FLUSHALL", "CONFIG", "CLIENT", "KEYS", "SELECT", "EVAL", "SLOWLOG"] {
+            assert!(!ai_allowed(c), "{c}");
+        }
     }
 
     #[tokio::test]

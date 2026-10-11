@@ -138,6 +138,8 @@ Tabla connects straight to your database and touches nothing else.
   a connection that uses a database user with only `SELECT` rights. DuckDB AI queries also run with
   file and network access switched off, so they can only read the database itself. On Oracle,
   Oracle's own parser must classify the statement as a query, and it runs in a read-only transaction.
+  Redis and MongoDB connections open read-only for AI and accept only an allowlist of reads
+  (GET, HGETALL, SCAN…; find, aggregate without `$out`/`$merge`, countDocuments, distinct).
 - **Production guardrails.** Connections tagged *production* show a red accent and
   ask before committing data or structure changes. Every row edit must match exactly one row.
 - **Locked-down web layer.** A strict Content Security Policy, no remote
@@ -169,6 +171,8 @@ claude mcp add tabla -- "/Applications/Tabla.app/Contents/MacOS/tabla" mcp
 Cursor, Claude Desktop, Windsurf and VS Code use the same command and `["mcp"]`
 argument in their MCP config. The dialog shows the exact snippet for your system.
 Tools exposed: `list_connections`, `get_schema`, `describe_table` and `run_query` (read-only).
+On Redis, `run_query` takes one read command (`HGETALL user:1`); on MongoDB, one
+mongosh-style read (`db.orders.find({status: "paid"}).limit(20)`).
 DuckDB allows only one program to write to a file, so an AI tool can read a DuckDB
 database while Tabla has it open only if that connection is set to read-only.
 
