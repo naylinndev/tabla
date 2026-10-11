@@ -12,7 +12,7 @@ import {
   Zap,
   Command,
 } from "lucide-react";
-import { api, errorMessage, type ConnectionConfig, type EnvUrl } from "../lib/api";
+import { api, errorMessage, isLocal, type ConnectionConfig, type EnvUrl } from "../lib/api";
 import { parseUrl } from "./ConnectionDialog";
 import { detectProvider } from "../lib/providers";
 import { newConnection, useApp } from "../lib/store";
@@ -29,7 +29,7 @@ function maskUrl(u: string) {
 }
 
 function address(c: ConnectionConfig) {
-  if (c.driver === "sqlite") return c.database;
+  if (isLocal(c.driver)) return c.database;
   return `${c.user ? c.user + "@" : ""}${c.host}:${c.port}${c.database ? "/" + c.database : ""}`;
 }
 

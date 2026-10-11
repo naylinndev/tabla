@@ -174,6 +174,7 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         },
         "pick_file" => json!(env_path("TABLA_BRIDGE_PICK").map(|p| p.to_string_lossy().into_owned())),
         "pick_sqlite_file" => json!(env_path("TABLA_BRIDGE_SQLITE").map(|p| p.to_string_lossy().into_owned())),
+        "pick_duckdb_file" => json!(env_path("TABLA_BRIDGE_DUCKDB").map(|p| p.to_string_lossy().into_owned())),
         "export_file" => {
             let dir = env_path("TABLA_BRIDGE_OUT").ok_or_else(|| AppError::msg("TABLA_BRIDGE_OUT not set"))?;
             let name: String = arg(&a, "defaultName")?;

@@ -39,6 +39,7 @@ tiberius = { version = "0.13.0", default-features = false, features = ["rustls",
 tokio-util = { version = "0.7.20", features = ["compat"] }
 chrono = "0.4.45"
 reqwest = { version = "0.13", default-features = false, features = ["query", "rustls", "stream"] }
+duckdb = { version = "1.10506.0", features = ["bundled", "json", "parquet"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

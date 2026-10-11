@@ -87,7 +87,10 @@ Maintainers: release and tap setup is described in [packaging/homebrew](packagin
 | Supabase · Neon · Timescale · Amazon RDS / Aurora | Supported | Hosted PostgreSQL / MySQL |
 | PlanetScale · TiDB Cloud | Supported | Hosted MySQL protocol |
 | Amazon Redshift | Beta | Browsing and queries |
-| SQL Server · MongoDB · ClickHouse · DuckDB · Oracle | Planned | See [Roadmap](#roadmap) |
+| SQL Server · Azure SQL | Supported | Native TDS driver |
+| ClickHouse · ClickHouse Cloud | Supported | HTTP interface (8123, or 8443 with TLS); no transactions |
+| DuckDB | Supported | Local files or `:memory:`; query Parquet, CSV and JSON files directly |
+| MongoDB · Oracle | Planned | See [Roadmap](#roadmap) |
 
 Every connection can go through an **SSH tunnel**, for databases on a VPS or
 behind a bastion host, and can use **TLS client certificates**.
@@ -116,7 +119,8 @@ Tabla connects straight to your database and touches nothing else.
 - **AI access (MCP) is opt-in per connection and read-only.** Each AI query must be a
   single read statement (SELECT/WITH/SHOW/EXPLAIN), known escape hatches are blocked, and it runs in a
   read-only transaction with a timeout that is always rolled back. For a hard guarantee, share
-  a connection that uses a database user with only `SELECT` rights.
+  a connection that uses a database user with only `SELECT` rights. DuckDB AI queries also run with
+  file and network access switched off, so they can only read the database itself.
 - **Production guardrails.** Connections tagged *production* show a red accent and
   ask before committing data or structure changes. Every row edit must match exactly one row.
 - **Locked-down web layer.** A strict Content Security Policy, no remote
@@ -126,6 +130,7 @@ Tabla connects straight to your database and touches nothing else.
 - **No telemetry, no analytics, no accounts.** The only network request Tabla
   makes on its own is a daily update check against GitHub Releases (a plain
   GET, no identifiers), which you can turn off under **Appearance → Updates**.
+  DuckDB extensions are only downloaded when you run `INSTALL` yourself.
 
 Found a vulnerability? Please open a private
 [security advisory](https://github.com/naylinndev/tabla/security/advisories/new)
@@ -143,6 +148,8 @@ claude mcp add tabla -- "/Applications/Tabla.app/Contents/MacOS/tabla" mcp
 Cursor, Claude Desktop, Windsurf and VS Code use the same command and `["mcp"]`
 argument in their MCP config. The dialog shows the exact snippet for your system.
 Tools exposed: `list_connections`, `get_schema`, `describe_table` and `run_query` (read-only).
+DuckDB allows only one program to write to a file, so an AI tool can read a DuckDB
+database while Tabla has it open only if that connection is set to read-only.
 
 ## Keyboard shortcuts
 
@@ -241,7 +248,8 @@ src-tauri/            Rust backend
 
 ## Roadmap
 
-- [ ] SQL Server, MongoDB, ClickHouse, DuckDB, Oracle
+- [x] SQL Server, ClickHouse, DuckDB
+- [ ] MongoDB, Oracle
 - [x] Create tables and indexes visually
 - [x] Saved queries and snippets
 - [x] Query cancellation and adjustable result size

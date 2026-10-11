@@ -24,6 +24,7 @@ pub enum Driver {
     Redis,
     Mssql,
     Clickhouse,
+    Duckdb,
 }
 
 impl Driver {
@@ -35,7 +36,13 @@ impl Driver {
             Driver::Redis => 6379,
             Driver::Mssql => 1433,
             Driver::Clickhouse => 8123,
+            Driver::Duckdb => 0,
         }
+    }
+
+    /// Opens a local file in-process: no host, port or SSH tunnel.
+    pub fn is_local(self) -> bool {
+        matches!(self, Driver::Sqlite | Driver::Duckdb)
     }
 
     pub fn quote_ident(self, s: &str) -> String {

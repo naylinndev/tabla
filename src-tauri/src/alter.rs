@@ -9,6 +9,8 @@
 //!   dropping one looks up and drops the existing constraint first.
 //! - ClickHouse: add, drop, rename, retype and defaults. Nullability is part
 //!   of the type there (`Nullable(T)`). Statements apply one by one.
+//! - DuckDB: add, drop, rename, retype, nullability and defaults, applied in
+//!   one transaction.
 //! - SQLite: add, rename and drop only (SQLite can't alter a column's type,
 //!   nullability or default in place).
 
@@ -172,7 +174,9 @@ impl Session {
                     // SQL Server's ADD takes no COLUMN keyword.
                     let add = if d == Driver::Mssql { "ADD" } else { "ADD COLUMN" };
                     let mut s = format!("ALTER TABLE {from} {add} {} {}", q(&c.name), c.data_type.trim());
-                    if !c.nullable {
+                    // DuckDB can't add a column with a constraint; set NOT NULL afterwards.
+                    let late_not_null = d == Driver::Duckdb && !c.nullable;
+                    if !c.nullable && !late_not_null {
                         if d == Driver::Sqlite && default_of(c).is_none() {
                             return Err(AppError::msg(format!(
                                 "SQLite needs a default value to add NOT NULL column `{}`",
@@ -185,6 +189,9 @@ impl Session {
                         s.push_str(&format!(" DEFAULT {def}"));
                     }
                     out.push(s);
+                    if late_not_null {
+                        out.push(format!("ALTER TABLE {from} ALTER COLUMN {} SET NOT NULL", q(&c.name)));
+                    }
                 }
                 (Some(o), None) => {
                     if d == Driver::Mssql {
@@ -200,7 +207,7 @@ impl Session {
                     }
                     validate(c)?;
                     match d {
-                        Driver::Postgres => {
+                        Driver::Postgres | Driver::Duckdb => {
                             if o.name != c.name {
                                 out.push(format!("ALTER TABLE {from} RENAME COLUMN {} TO {}", q(&o.name), q(&c.name)));
                             }
@@ -342,6 +349,23 @@ impl Session {
         match &self.pool {
             Pool::Pg(p) => in_tx!(p),
             Pool::Lite(p) => in_tx!(p),
+            Pool::Duck(dk) => {
+                let (res, log) = dk.exec_script_tx(stmts.clone()).await?;
+                for (sql, started, outcome) in log {
+                    self.record(&sql, started, outcome);
+                }
+                res.map_err(|e| {
+                    let m = e.to_string();
+                    if m.starts_with("Dependency Error") {
+                        AppError::msg(format!(
+                            "{m}\nDuckDB can't change a table while indexes or other tables' foreign keys depend on it. \
+                             Drop those first, or create a new table with the structure you want and copy the data across."
+                        ))
+                    } else {
+                        e
+                    }
+                })?;
+            }
             // No transactions: apply in order and say how far it got.
             Pool::Ch(c) => {
                 for (i, s) in stmts.iter().enumerate() {

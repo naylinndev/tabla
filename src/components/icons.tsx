@@ -21,7 +21,7 @@ export function Logo({ size = 28 }: { size?: number }) {
   );
 }
 
-const DRIVER_LABEL: Record<Driver, string> = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse" };
+const DRIVER_LABEL: Record<Driver, string> = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse", duckdb: "DuckDB" };
 
 export const driverLabel = (d: Driver) => DRIVER_LABEL[d];
 
@@ -38,7 +38,7 @@ export function DriverIcon({ driver, provider, size = 28 }: { driver: Driver; pr
         </linearGradient>
       </defs>
       <rect x="1" y="1" width="30" height="30" rx="8" fill={`url(#${id})`} />
-      {m.id === "sqlite" ? (
+      {m.id === "sqlite" || m.id === "duckdb" ? (
         // A small cylinder: the classic "database file" glyph.
         <g fill="none" stroke="#fff" strokeWidth="2">
           <ellipse cx="16" cy="10.5" rx="7" ry="2.8" />

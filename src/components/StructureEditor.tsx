@@ -27,6 +27,7 @@ const TYPES: Record<string, string[]> = {
   mysql: ["int", "bigint", "smallint", "tinyint", "mediumint", "decimal", "float", "double", "bit", "varchar", "char", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "json", "enum", "blob", "longblob", "binary", "varbinary"],
   sqlite: ["TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"],
   clickhouse: ["String", "UInt8", "UInt16", "UInt32", "UInt64", "Int8", "Int16", "Int32", "Int64", "Float32", "Float64", "Decimal", "Bool", "Date", "Date32", "DateTime", "DateTime64", "UUID", "IPv4", "IPv6", "Array(String)", "LowCardinality(String)", "Map(String, String)", "JSON", "FixedString"],
+  duckdb: ["VARCHAR", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "HUGEINT", "UBIGINT", "DOUBLE", "FLOAT", "DECIMAL", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "INTERVAL", "UUID", "JSON", "BLOB", "VARCHAR[]", "INTEGER[]", "MAP(VARCHAR, VARCHAR)"],
   mssql: ["int", "bigint", "smallint", "tinyint", "bit", "decimal", "numeric", "money", "float", "real", "nvarchar", "varchar", "nchar", "char", "date", "time", "datetime2", "datetimeoffset", "datetime", "uniqueidentifier", "varbinary", "xml"],
 };
 
@@ -298,7 +299,7 @@ export function StructureEditor({
           <span className="sg-count">
             {drafts.filter((d) => !d.dropped).length} columns
             {!mysql && editable && (
-              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : driver === "clickhouse" ? "ClickHouse" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
+              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : driver === "clickhouse" ? "ClickHouse" : driver === "duckdb" ? "DuckDB" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
                 {" "}
                 · <Info size={11} style={{ verticalAlign: -1 }} /> drag sets view order
               </span>

@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { local, newConnection, useApp, type SavedQuery, type Session, type Tab } from "../lib/store";
+import { isLocal } from "../lib/api";
 import { DriverIcon } from "./icons";
 import { schemaPrompt } from "../lib/ai";
 import { ContextMenu, Kbd, Modal, TagBadge, useDrag } from "./ui";
@@ -77,7 +78,7 @@ export function Rail() {
             <div
               key={c.id}
               className={`rail-conn ${active ? "active" : ""} ${s ? "open" : "closed"}`}
-              title={`${c.name} · ${c.driver === "sqlite" ? c.database : `${c.host}:${c.port}`}${s ? "" : " · click to connect"}`}
+              title={`${c.name} · ${isLocal(c.driver) ? c.database : `${c.host}:${c.port}`}${s ? "" : " · click to connect"}`}
             >
               <button
                 className={`rail-item conn ${active ? "active" : ""}`}
@@ -294,7 +295,7 @@ export function Sidebar({ session }: { session: Session }) {
               {c.readOnly && <Lock size={11} className="dim" />}
             </div>
             <div className="sb-conn-meta">
-              {c.driver === "sqlite" ? c.database.split(/[\\/]/).pop() : `${c.host}:${c.port}`} · v
+              {isLocal(c.driver) ? c.database.split(/[\\/]/).pop() : `${c.host}:${c.port}`} · v
               {session.serverVersion.split(/[\s-]/)[0]}
             </div>
           </div>
@@ -396,7 +397,7 @@ export function Sidebar({ session }: { session: Session }) {
         <button className="icon-btn" style={{ width: 32, height: 32 }} title="ER diagram of this schema" onClick={() => useApp.getState().openErd(session.id)}>
           <Waypoints />
         </button>
-        {c.driver !== "sqlite" && (
+        {!isLocal(c.driver) && (
           <button className="icon-btn" style={{ width: 32, height: 32 }} title="Users & privileges" onClick={() => useApp.getState().openUsers(session.id)}>
             <UsersIcon />
           </button>

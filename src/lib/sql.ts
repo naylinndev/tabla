@@ -51,8 +51,8 @@ export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR
     .filter((f) => f.enabled && f.column)
     .map((f) => {
       const col = quoteIdent(driver, f.column);
-      const asText = driver === "postgres" ? `${col}::text` : driver === "clickhouse" ? `toString(${col})` : col;
-      const like = driver === "postgres" || driver === "clickhouse" ? "ILIKE" : "LIKE";
+      const asText = driver === "postgres" || driver === "duckdb" ? `${col}::text` : driver === "clickhouse" ? `toString(${col})` : col;
+      const like = driver === "postgres" || driver === "clickhouse" || driver === "duckdb" ? "ILIKE" : "LIKE";
       const lit = (v: string) => quoteLiteral(driver, v);
       // MySQL and ClickHouse already treat backslash as the LIKE escape.
       const esc = driver === "mysql" || driver === "clickhouse" ? "" : " ESCAPE '\\'";

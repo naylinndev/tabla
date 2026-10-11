@@ -81,6 +81,7 @@ impl Session {
                 .map_err(|e| AppError::msg(format!("Can't list accounts: {e}. Your user needs the SHOW USERS privilege.")))?,
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
+            Driver::Duckdb => return Err(AppError::msg("DuckDB has no user accounts")),
         };
         Ok(rows
             .into_iter()
@@ -146,6 +147,7 @@ impl Session {
             }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
+            Driver::Duckdb => return Err(AppError::msg("DuckDB has no user accounts")),
         };
         let rows = self.run_script(&sql, 10_000).await?;
         Ok(rows

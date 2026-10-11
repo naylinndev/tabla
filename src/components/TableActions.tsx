@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Copy, CopyPlus, Download, Eraser, ExternalLink, FileCode2, Info, PenLine, ShieldAlert, Trash2 } from "lucide-react";
-import { api, errorMessage, type Driver, type TableInfo } from "../lib/api";
+import { api, errorMessage, isLocal, type Driver, type TableInfo } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
 import { toCSV } from "../lib/sql";
 import { useApp, type Session } from "../lib/store";
@@ -24,7 +24,7 @@ function buildSql(d: Driver, schema: string, t: TableInfo, action: Action, targe
       if (d === "mysql") return [`CREATE TABLE ${to} LIKE ${from}`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
       // Copies columns and identity; keys and indexes are not copied.
       if (d === "mssql") return [`SELECT * INTO ${to} FROM ${from}${withData ? "" : " WHERE 1 = 0"}`];
-      return [`CREATE TABLE ${to} AS SELECT * FROM ${from}${withData ? "" : " WHERE 0"}`];
+      return [`CREATE TABLE ${to} AS SELECT * FROM ${from}${withData ? "" : d === "duckdb" ? " WHERE false" : " WHERE 0"}`];
     case "truncate":
       return d === "sqlite" ? [`DELETE FROM ${from}`] : [`TRUNCATE TABLE ${from}`];
     case "drop":
@@ -166,9 +166,9 @@ function TableActionDialog({ session, action, table, onClose }: { session: Sessi
           </div>
         )}
         {action === "duplicate" && <Checkbox checked={withData} onChange={setWithData} label="Copy the data too" />}
-        {action === "duplicate" && d === "sqlite" && (
+        {action === "duplicate" && isLocal(d) && (
           <p className="hint">
-            <Info /> SQLite copies columns and data, but not keys, indexes or constraints.
+            <Info /> {d === "duckdb" ? "DuckDB" : "SQLite"} copies columns and data, but not keys, indexes or constraints.
           </p>
         )}
         {destructive && (

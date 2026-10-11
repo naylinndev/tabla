@@ -102,12 +102,12 @@ export function UsersView({ session, active }: { session: Session; active: boole
   const shown = useMemo(() => (users ?? []).filter((u) => !q || u.name.toLowerCase().includes(q.toLowerCase())), [users, q]);
   const reload = () => setRev((r) => r + 1);
 
-  if (d === "sqlite")
+  if (d === "sqlite" || d === "duckdb")
     return (
       <div className="q-message">
         <div className="card dim">
           <Users />
-          SQLite databases are files without user accounts. Control access with file permissions.
+          {d === "sqlite" ? "SQLite" : "DuckDB"} databases are files without user accounts. Control access with file permissions.
         </div>
       </div>
     );

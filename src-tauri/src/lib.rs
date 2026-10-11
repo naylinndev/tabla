@@ -26,6 +26,7 @@ mod clickhouse;
 mod commands;
 mod config;
 mod db;
+mod duck;
 mod error;
 mod mcp;
 mod mssql;
@@ -81,6 +82,7 @@ pub fn run() {
             commands::plan_alter,
             commands::apply_alter,
             commands::pick_sqlite_file,
+            commands::pick_duckdb_file,
             commands::pick_file,
             commands::pick_csv_file,
             commands::export_file,

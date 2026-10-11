@@ -1,5 +1,6 @@
 import { Command } from "cmdk";
 import { Waypoints, Users, Bot, ArrowDownUp, CornerDownLeft, Code2, Eye, Home, Moon, Plug, Plus, Power, Sun, Table2 } from "lucide-react";
+import { isLocal } from "../lib/api";
 import { newConnection, useActiveSession, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { Modal } from "./ui";
@@ -45,7 +46,7 @@ export function CommandPalette() {
                 <Command.Item value="new query sql editor" onSelect={() => run(() => st().newQuery(session.id))}>
                   <Code2 /> New query
                 </Command.Item>
-                {session.connection.driver !== "sqlite" && (
+                {!isLocal(session.connection.driver) && (
                   <Command.Item value="users accounts privileges grants roles" onSelect={() => run(() => st().openUsers(session.id))}>
                     <Users /> Users & privileges
                   </Command.Item>

@@ -30,6 +30,7 @@ pub enum Pool {
     Lite(SqlitePool),
     Ms(crate::mssql::MsPool),
     Ch(crate::clickhouse::ChClient),
+    Duck(crate::duck::DuckDb),
 }
 
 /// One statement Tabla sent to the server (Console view). Memory only.
@@ -54,6 +55,7 @@ enum Cancel {
     My(String),
     Ms(String),
     Ch(String),
+    Duck(std::sync::Arc<duckdb::InterruptHandle>),
 }
 
 pub struct Session {
@@ -277,7 +279,7 @@ impl Session {
         let db_port = cfg.port_or_default();
         // Through SSH, the DB host/port are resolved on the SSH server and we
         // connect to the local end of the tunnel instead.
-        let tunnel = if cfg.ssh.enabled && cfg.driver != Driver::Sqlite {
+        let tunnel = if cfg.ssh.enabled && !cfg.driver.is_local() {
             let secret = crate::config::resolve_ssh_secret(cfg)?;
             Some(crate::ssh::open(&cfg.ssh, secret, db_host, db_port).await?)
         } else {
@@ -355,6 +357,7 @@ impl Session {
             }
             Driver::Clickhouse => Pool::Ch(crate::clickhouse::ChClient::connect(cfg, host, port, password.clone()).await?),
             Driver::Mssql => Pool::Ms(crate::mssql::MsPool::connect(crate::mssql::build_config(cfg, host, port, db_host, password.clone())).await?),
+            Driver::Duckdb => Pool::Duck(crate::duck::DuckDb::open(&cfg.database, cfg.read_only).await?),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 if cfg.database.trim().is_empty() {
@@ -377,7 +380,7 @@ impl Session {
             Pool::My(p) => p.close().await,
             Pool::Lite(p) => p.close().await,
             Pool::Ms(p) => p.close().await,
-            Pool::Ch(_) => {}
+            Pool::Ch(_) | Pool::Duck(_) => {}
         }
     }
 
@@ -442,6 +445,7 @@ impl Session {
                 self.ms_script(&mut conn, sql, max_rows, None).await?
             }
             Pool::Ch(c) => c.run(sql, max_rows, None, &[]).await?,
+            Pool::Duck(dk) => dk.run(sql, max_rows, None, |_| {}).await?,
         };
 
         // A SELECT with zero rows carries no column metadata; ask the server.
@@ -503,6 +507,13 @@ impl Session {
                     self.running.lock().unwrap().remove(query_id);
                     out?
                 }
+                Pool::Duck(dk) => {
+                    let out = dk.run(sql, max_rows, progress, |h| {
+                        self.running.lock().unwrap().insert(query_id.into(), Cancel::Duck(h));
+                    }).await;
+                    self.running.lock().unwrap().remove(query_id);
+                    out?
+                }
                 // SQLite runs in-process; queries are local and cannot be interrupted from here.
                 Pool::Lite(p) => collect_with(raw().fetch_many(p), max_rows, |q| q.rows_affected(), lite_cell, progress).await?,
             })
@@ -510,7 +521,7 @@ impl Session {
         .await;
         let mut res = res.map_err(|e| {
             let m = e.to_string().to_lowercase();
-            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") || m.contains("(query_was_cancelled)") {
+            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") || m.contains("(query_was_cancelled)") || m.contains("interrupt") {
                 AppError::msg("Query cancelled")
             } else {
                 e
@@ -549,6 +560,11 @@ impl Session {
                     Some(sql)
                 }
                 Some(Cancel::Ch(id)) => Some(format!("KILL QUERY WHERE query_id = {} ASYNC", Driver::Clickhouse.quote_literal(id))),
+                // In-process: interrupt the connection directly.
+                Some(Cancel::Duck(h)) => {
+                    h.interrupt();
+                    return Ok(true);
+                }
                 None => None,
             }
         };
@@ -560,7 +576,7 @@ impl Session {
             Pool::My(p) => {
                 p.execute(AssertSqlSafe(sql)).await?;
             }
-            Pool::Lite(_) => return Ok(false),
+            Pool::Lite(_) | Pool::Duck(_) => return Ok(false),
             Pool::Ms(p) => {
                 let mut conn = p.acquire().await?;
                 crate::mssql::run(&mut conn, &sql, 0, None).await?;
@@ -584,7 +600,7 @@ impl Session {
             Pool::My(p) => meta(p.describe(s).await.ok()?.columns()),
             Pool::Lite(p) => meta(p.describe(s).await.ok()?.columns()),
             // SQL Server sends column metadata even for empty results.
-            Pool::Ms(_) | Pool::Ch(_) => return None,
+            Pool::Ms(_) | Pool::Ch(_) | Pool::Duck(_) => return None,
         };
         (!cols.is_empty()).then_some(cols)
     }
@@ -597,7 +613,7 @@ impl Session {
         let sql = match self.driver {
             Driver::Postgres => "SHOW server_version",
             Driver::Mysql => "SELECT VERSION()",
-            Driver::Clickhouse => "SELECT version()",
+            Driver::Clickhouse | Driver::Duckdb => "SELECT version()",
             Driver::Mssql => "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)) + N' ' + CAST(SERVERPROPERTY('Edition') AS nvarchar(128))",
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT sqlite_version()",
@@ -624,6 +640,10 @@ impl Session {
                 "SELECT name FROM sys.schemas WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest') AND name NOT LIKE 'db[_]%' \
                  ORDER BY CASE WHEN name = 'dbo' THEN 0 ELSE 1 END, name"
             }
+            Driver::Duckdb => {
+                "SELECT schema_name FROM duckdb_schemas() WHERE database_name = current_database() \
+                 AND schema_name NOT IN ('information_schema', 'pg_catalog') ORDER BY schema_name = 'main' DESC, schema_name"
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT name FROM pragma_database_list ORDER BY seq",
         };
@@ -632,7 +652,7 @@ impl Session {
 
     pub async fn current_schema(&self) -> AppResult<Option<String>> {
         let sql = match self.driver {
-            Driver::Postgres => "SELECT current_schema()",
+            Driver::Postgres | Driver::Duckdb => "SELECT current_schema()",
             Driver::Mysql => "SELECT DATABASE()",
             Driver::Mssql => "SELECT SCHEMA_NAME()",
             Driver::Clickhouse => "SELECT currentDatabase()",
@@ -662,6 +682,11 @@ impl Session {
             Driver::Mssql => format!(
                 "SELECT o.name, RTRIM(o.type), (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
                  FROM sys.objects o WHERE o.schema_id = SCHEMA_ID({lit}) AND o.type IN ('U', 'V') ORDER BY o.name"
+            ),
+            Driver::Duckdb => format!(
+                "SELECT table_name, 'table', estimated_size FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = {lit} \
+                 UNION ALL SELECT view_name, 'view', NULL FROM duckdb_views() WHERE database_name = current_database() AND schema_name = {lit} \
+                 AND NOT internal ORDER BY 1"
             ),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
@@ -763,6 +788,21 @@ impl Session {
                     })
                     .collect()
             }
+            Driver::Duckdb => {
+                let sql = format!(
+                    "SELECT c.column_name, c.data_type, CASE WHEN c.is_nullable THEN '1' ELSE '0' END, c.column_default, \
+                     CASE WHEN {DUCK_PK} THEN '1' ELSE '0' END, \
+                     CASE WHEN {DUCK_PK} THEN 'PRI' \
+                          WHEN EXISTS (SELECT 1 FROM duckdb_constraints() k WHERE {DUCK_K_OF_C} AND k.constraint_type = 'UNIQUE' \
+                            AND k.constraint_column_names = [c.column_name]) THEN 'UNI' \
+                          WHEN EXISTS (SELECT 1 FROM duckdb_indexes() i WHERE i.database_name = c.database_name AND i.schema_name = c.schema_name \
+                            AND i.table_name = c.table_name AND i.expressions LIKE '%' || c.column_name || '%') THEN 'MUL' ELSE '' END, \
+                     CASE WHEN c.column_default LIKE 'nextval(%' THEN 'auto increment' ELSE '' END \
+                     FROM duckdb_columns() c WHERE c.database_name = current_database() AND c.schema_name = {s} AND c.table_name = {t} \
+                     ORDER BY c.column_index"
+                );
+                self.text_rows(&sql).await?.into_iter().map(|r| column_from(r, |v| v == "1", |v| v == "1")).collect()
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let sql = format!(
@@ -805,6 +845,19 @@ impl Session {
                    FROM sys.index_columns ic WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0) x \
                  WHERE i.object_id = OBJECT_ID({}) AND i.type > 0 ORDER BY i.is_primary_key DESC, i.name",
                 d.quote_literal(&d.qualified(schema, table))
+            ),
+            // Primary key and unique constraints are enforced by implicit indexes
+            // that duckdb_indexes() leaves out, so list them from the constraints.
+            Driver::Duckdb => format!(
+                "SELECT CASE WHEN k.constraint_type = 'PRIMARY KEY' THEN 'PRIMARY' ELSE k.constraint_name END, \
+                 k.constraint_type || ' (' || array_to_string(k.constraint_column_names, ', ') || ')', '1', \
+                 CASE WHEN k.constraint_type = 'PRIMARY KEY' THEN '1' ELSE '0' END, 'art', array_to_string(k.constraint_column_names, ', ') \
+                 FROM duckdb_constraints() k WHERE k.database_name = current_database() AND k.schema_name = {s} AND k.table_name = {t} \
+                 AND k.constraint_type IN ('PRIMARY KEY', 'UNIQUE') \
+                 UNION ALL \
+                 SELECT index_name, sql, CASE WHEN is_unique THEN '1' ELSE '0' END, '0', 'art', trim(expressions::VARCHAR, '[]') \
+                 FROM duckdb_indexes() WHERE database_name = current_database() AND schema_name = {s} AND table_name = {t} \
+                 ORDER BY 4 DESC, 1"
             ),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
@@ -862,6 +915,11 @@ impl Session {
                  FROM sys.columns c JOIN sys.objects o ON o.object_id = c.object_id JOIN sys.types t ON t.user_type_id = c.user_type_id \
                  WHERE o.schema_id = SCHEMA_ID({s}) AND o.type IN ('U', 'V') ORDER BY o.name, c.column_id"
             )),
+            Driver::Duckdb => Some(format!(
+                "SELECT c.table_name, c.column_name, c.data_type, CASE WHEN {DUCK_PK} THEN '1' ELSE '0' END \
+                 FROM duckdb_columns() c WHERE c.database_name = current_database() AND c.schema_name = {s} \
+                 ORDER BY c.table_name, c.column_index"
+            )),
             Driver::Sqlite => None,
             Driver::Redis => return Err(crate::error::not_sql()),
         };
@@ -912,6 +970,7 @@ impl Session {
             Driver::Postgres => format!("{PG_FK_BASE} AND n.nspname = {s} ORDER BY 3, 1"),
             Driver::Mysql => format!("{MY_FK_BASE} AND k.TABLE_SCHEMA = {s} {MY_FK_GROUP} ORDER BY 3, 1"),
             Driver::Mssql => format!("{MS_FK_BASE} AND fk.schema_id = SCHEMA_ID({s}) ORDER BY 3, 1"),
+            Driver::Duckdb => format!("{DUCK_FK_BASE} AND k.schema_name = {s} ORDER BY 3, 1"),
             _ => return Ok(vec![]),
         };
         Ok(parse_fks(self.text_rows(&sql).await?, d == Driver::Postgres))
@@ -941,6 +1000,14 @@ impl Session {
             }
             // ClickHouse has no foreign keys or triggers.
             Driver::Clickhouse => return Ok(TableRelations { outgoing: vec![], incoming: vec![], triggers: vec![] }),
+            // DuckDB has foreign keys but no triggers.
+            Driver::Duckdb => {
+                return Ok(TableRelations {
+                    outgoing: parse_fks(self.text_rows(&format!("{DUCK_FK_BASE} AND k.schema_name = {s} AND k.table_name = {t} ORDER BY 1")).await?, false),
+                    incoming: parse_fks(self.text_rows(&format!("{DUCK_FK_BASE} AND k.schema_name = {s} AND k.referenced_table = {t} ORDER BY 3, 1")).await?, false),
+                    triggers: vec![],
+                });
+            }
             Driver::Mssql => {
                 let obj = d.quote_literal(&d.qualified(schema, table));
                 (
@@ -987,7 +1054,7 @@ impl Session {
                    '` FOR EACH ROW ', ACTION_STATEMENT) \
                  FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = {s} AND EVENT_OBJECT_TABLE = {t} ORDER BY ACTION_ORDER"
             ),
-            Driver::Clickhouse => unreachable!("returned above"),
+            Driver::Clickhouse | Driver::Duckdb => unreachable!("returned above"),
             Driver::Mssql => format!(
                 "SELECT tr.name, CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END, \
                  (SELECT STRING_AGG(te.type_desc, ', ') FROM sys.trigger_events te WHERE te.object_id = tr.object_id), \
@@ -1196,6 +1263,35 @@ impl Session {
                     self.pg_ddl(schema, table).await?
                 });
             }
+            Driver::Duckdb => {
+                let r = first(
+                    self.text_rows(&format!(
+                        "SELECT (SELECT count(*) FROM {from}), t.sql, t.comment, t.column_count, t.index_count, \
+                         CASE WHEN t.has_primary_key THEN 'yes' ELSE 'no' END, \
+                         (SELECT CASE WHEN path IS NULL THEN 'in memory' ELSE path END FROM duckdb_databases() WHERE database_name = current_database()) \
+                         FROM duckdb_tables() t WHERE t.database_name = current_database() AND t.schema_name = {s} AND t.table_name = {t} \
+                         UNION ALL \
+                         SELECT NULL, v.sql, v.comment, NULL, NULL, NULL, NULL FROM duckdb_views() v \
+                         WHERE v.database_name = current_database() AND v.schema_name = {s} AND v.view_name = {t}",
+                        from = d.qualified(schema, table)
+                    ))
+                    .await?,
+                );
+                let mut it = r.into_iter();
+                let mut v = || it.next().flatten();
+                out.rows_estimate = num(v());
+                out.ddl = v();
+                out.comment = v().filter(|c| !c.is_empty());
+                out.engine = Some("DuckDB".into());
+                out.stats = [stat("Columns", v(), "number"), stat("Indexes", v(), "number"), stat("Primary key", v(), "text")].into_iter().flatten().collect();
+                // The file plus its write-ahead log, which holds recent changes until a checkpoint.
+                let file = v().filter(|p| p != "in memory");
+                out.total_bytes = file.as_ref().map(|p| {
+                    let size = |p: &str| std::fs::metadata(p).map(|m| m.len() as i64).unwrap_or(0);
+                    size(p) + size(&format!("{p}.wal"))
+                });
+                out.stats.extend(stat("Database file", Some(file.unwrap_or_else(|| "in memory".into())), "text"));
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let q = d.quote_ident(schema);
@@ -1328,6 +1424,7 @@ impl Session {
             Pool::Lite(p) => guarded!(p, "BEGIN", "SELECT 1", lite_cell),
             // The server enforces read-only mode and the time limit.
             Pool::Ch(c) => vec![c.query(sql, max_rows, None, &[("readonly", "2".into()), ("max_execution_time", "15".into())]).await?],
+            Pool::Duck(dk) => vec![dk.run_readonly(sql, max_rows).await?],
             // SQL Server has no read-only transactions: the statement is
             // validated by ai_guard, then run in a transaction that is
             // always rolled back, with a client-side timeout.
@@ -1393,7 +1490,7 @@ impl Session {
         let from = d.qualified(schema, table);
 
         // Postgres needs explicit casts because parameters are bound as text.
-        let types: HashMap<String, String> = if matches!(d, Driver::Postgres | Driver::Clickhouse) {
+        let types: HashMap<String, String> = if matches!(d, Driver::Postgres | Driver::Clickhouse | Driver::Duckdb) {
             self.table_structure(schema, table).await?.columns.into_iter().map(|c| (c.name, c.data_type)).collect()
         } else {
             HashMap::new()
@@ -1479,6 +1576,13 @@ impl Session {
             Pool::Lite(p) => exec_tx!(p),
             Pool::Ms(p) => self.ms_exec_tx(p, stmts).await?,
             Pool::Ch(c) => self.ch_exec(c, &from, stmts).await?,
+            Pool::Duck(dk) => {
+                let (res, log) = dk.exec_tx(stmts).await?;
+                for (sql, started, outcome) in log {
+                    self.record(&sql, started, outcome);
+                }
+                res?
+            }
         })
     }
 
@@ -1605,6 +1709,18 @@ const MS_TYPE: &str = "CASE WHEN t.name IN ('varchar','char','varbinary','binary
      WHEN t.name IN ('datetime2','time','datetimeoffset') THEN t.name + '(' + CAST(c.scale AS varchar(5)) + ')' \
      ELSE t.name END";
 
+/// Whether duckdb_columns() row `c` is part of its table's primary key.
+const DUCK_PK: &str = "EXISTS (SELECT 1 FROM duckdb_constraints() k WHERE k.database_name = c.database_name \
+     AND k.schema_name = c.schema_name AND k.table_name = c.table_name AND k.constraint_type = 'PRIMARY KEY' \
+     AND list_contains(k.constraint_column_names, c.column_name))";
+
+const DUCK_K_OF_C: &str = "k.database_name = c.database_name AND k.schema_name = c.schema_name AND k.table_name = c.table_name";
+
+/// DuckDB only supports NO ACTION / RESTRICT foreign keys.
+const DUCK_FK_BASE: &str = "SELECT k.constraint_name, k.schema_name, k.table_name, array_to_string(k.constraint_column_names, ', '), \
+     k.schema_name, k.referenced_table, array_to_string(k.referenced_column_names, ', '), 'NO ACTION', 'NO ACTION' \
+     FROM duckdb_constraints() k WHERE k.constraint_type = 'FOREIGN KEY' AND k.database_name = current_database()";
+
 const MS_FK_BASE: &str = "SELECT fk.name, SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fk.parent_object_id), \
      (SELECT STRING_AGG(COL_NAME(fkc.parent_object_id, fkc.parent_column_id), ', ') WITHIN GROUP (ORDER BY fkc.constraint_column_id) \
        FROM sys.foreign_key_columns fkc WHERE fkc.constraint_object_id = fk.object_id), \
@@ -1629,6 +1745,10 @@ impl Placeholders<'_> {
                 format!("CAST(CAST(${} AS text) AS {ty})", self.n)
             }
             Driver::Mssql => format!("@P{}", self.n),
+            Driver::Duckdb => {
+                let ty = self.types.get(col).map(String::as_str).unwrap_or("VARCHAR");
+                format!("CAST(CAST(? AS VARCHAR) AS {ty})")
+            }
             // Typed query parameters, sent as param_pN.
             Driver::Clickhouse => {
                 let ty = self.types.get(col).map(String::as_str).unwrap_or("String");
@@ -1840,7 +1960,7 @@ pub fn redact_secrets(sql: &str) -> String {
     out
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(2 + bytes.len().min(MAX_BINARY_PREVIEW) * 2);
     s.push_str("0x");
     for b in bytes.iter().take(MAX_BINARY_PREVIEW) {

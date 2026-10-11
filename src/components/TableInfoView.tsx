@@ -5,7 +5,7 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import { MSSQL, MySQL, PostgreSQL, SQLite, StandardSQL, sql } from "@codemirror/lang-sql";
 import { Check, Copy, RefreshCw } from "lucide-react";
-import { api, errorMessage, type TableDetails } from "../lib/api";
+import { api, errorMessage, isLocal, type TableDetails } from "../lib/api";
 import { formatBytes, formatNumber } from "../lib/format";
 import type { Session } from "../lib/store";
 
@@ -16,7 +16,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
   { tag: [t.typeName, t.function(t.variableName), t.standard(t.name)], color: "var(--syn-fn)" },
 ]);
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL, clickhouse: StandardSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL, clickhouse: StandardSQL, duckdb: PostgreSQL };
 
 export function TableInfoView({ session, schema, table }: { session: Session; schema: string; table: string }) {
   const [info, setInfo] = useState<TableDetails | null>(null);
@@ -51,7 +51,7 @@ export function TableInfoView({ session, schema, table }: { session: Session; sc
   ];
   const stats: [string, string][] = [
     ["Number of rows", info.rowsEstimate == null ? "—" : `~${formatNumber(info.rowsEstimate)}`],
-    [session.connection.driver === "sqlite" ? "Database file size" : "Total size", formatBytes(info.totalBytes)],
+    [isLocal(session.connection.driver) ? "Database file size" : "Total size", formatBytes(info.totalBytes)],
     ...info.stats.map((s): [string, string] => [s.label, fmt(s.kind, s.value)]),
   ];
 

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Fingerprint, Network, ShieldCheck, Bot, LifeBuoy, BookOpen, CheckCircle2, ChevronDown, FolderOpen, Info, KeyRound, Link2, Lock, ShieldAlert, XCircle, Zap } from "lucide-react";
-import { api, errorMessage, type ConnectionConfig, type Driver, type EnvTag, type SshConfig, type SslMode } from "../lib/api";
+import { api, errorMessage, isLocal, type ConnectionConfig, type Driver, type EnvTag, type SshConfig, type SslMode } from "../lib/api";
 import { newConnection as newConnectionDefaults, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { PROVIDERS, detectProvider, providerById, type Provider } from "../lib/providers";
@@ -16,7 +16,7 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "production", label: "Production" },
 ];
 type DialogTab = "connection" | "ssh" | "ssl" | "options";
-const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123 };
+const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123, duckdb: 0 };
 
 /** clickhouse://, ch:// and ClickHouse Cloud https:// URLs. Native ports map to the HTTP ones. */
 function parseClickhouse(u: URL, scheme: string): Partial<ConnectionConfig> {
@@ -89,8 +89,10 @@ export function parseMssql(raw: string): Partial<ConnectionConfig> | null {
   };
 }
 
-/** Parses postgres://, mysql://, sqlite://, redis:// and SQL Server connection strings into form fields. */
+/** Parses postgres://, mysql://, sqlite://, duckdb:, redis:// and SQL Server connection strings into form fields. */
 export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
+  const duck = raw.trim().match(/^duckdb:(?:\/\/)?(.+)$/i);
+  if (duck) return { driver: "duckdb", database: decodeURIComponent(duck[1]), host: "", port: 0 };
   if (/^(jdbc:)?(sqlserver|mssql):\/\//i.test(raw.trim()) || /(^|;)\s*(server|data source)\s*=/i.test(raw)) return parseMssql(raw);
   try {
     const u = new URL(raw.trim());
@@ -177,7 +179,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
 
   const payload = (): ConnectionConfig => ({
     ...f,
-    name: f.name.trim() || (f.driver === "sqlite" ? f.database.split(/[\\/]/).pop() ?? "SQLite" : f.host || "Untitled"),
+    name: f.name.trim() || (isLocal(f.driver) ? f.database.split(/[\\/]/).pop() ?? provider.label : f.host || "Untitled"),
     // undefined keeps the keychain value; a typed value replaces it.
     password: pwTouched || isNew ? password : undefined,
     sshSecret: sshTouched || isNew ? sshSecret : undefined,
@@ -234,7 +236,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
   };
 
   const pickFile = async () => {
-    const path = await api.pickSqliteFile();
+    const path = await (f.driver === "duckdb" ? api.pickDuckdbFile() : api.pickSqliteFile());
     if (path) {
       set("database", path);
       if (!f.name) set("name", path.split(/[\\/]/).pop() ?? "");
@@ -242,7 +244,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
   };
 
   const tabs: { id: DialogTab; label: string; on?: boolean }[] =
-    f.driver === "sqlite"
+    isLocal(f.driver)
       ? [
           { id: "connection", label: "Connection" },
           { id: "options", label: "Options" },
@@ -262,8 +264,8 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
   const next = () => {
     // Light validation so a step can't be skipped with the essentials missing.
     if (tab === "connection") {
-      if (f.driver === "sqlite" ? !f.database.trim() : !f.host.trim())
-        return setTest({ ok: false, msg: f.driver === "sqlite" ? "Choose a database file first" : "Enter the host first" });
+      if (isLocal(f.driver) ? !f.database.trim() : !f.host.trim())
+        return setTest({ ok: false, msg: isLocal(f.driver) ? "Choose a database file first" : "Enter the host first" });
     }
     if (tab === "ssh" && f.ssh.enabled && !f.ssh.host.trim()) return setTest({ ok: false, msg: "Enter the SSH host, or turn the tunnel off" });
     setTest(null);
@@ -332,9 +334,9 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 driver: p.driver,
                 port: p.port,
                 sslMode: p.sslMode,
-                host: p.driver === "sqlite" ? "" : keep(x.host, prev.hostPlaceholder === "localhost" ? "localhost" : "") || (p.hostPlaceholder === "localhost" ? "localhost" : ""),
+                host: isLocal(p.driver) ? "" : keep(x.host, prev.hostPlaceholder === "localhost" ? "localhost" : "") || (p.hostPlaceholder === "localhost" ? "localhost" : ""),
                 user: keep(x.user, prev.user) || p.user || "",
-                database: p.driver === "sqlite" || prev.driver === "sqlite" ? "" : keep(x.database, prev.database) || p.database || "",
+                database: isLocal(p.driver) || isLocal(prev.driver) ? "" : keep(x.database, prev.database) || p.database || "",
               };
             });
             setTest(null);
@@ -382,7 +384,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           </div>
         )}
 
-        {f.driver !== "sqlite" && (
+        {!isLocal(f.driver) && (
           <div className="field">
             <label>Import from URL</label>
             <div className="url-row">
@@ -412,13 +414,13 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           />
         </div>
 
-        {f.driver === "sqlite" ? (
+        {isLocal(f.driver) ? (
           <div className="field">
             <label>Database file</label>
             <div className="url-row">
               <input
                 className="input mono"
-                placeholder="/path/to/database.sqlite"
+                placeholder={f.driver === "duckdb" ? "/path/to/analytics.duckdb or :memory:" : "/path/to/database.sqlite"}
                 value={f.database}
                 onChange={(e) => set("database", e.target.value)}
                 spellCheck={false}
@@ -491,7 +493,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           </>
         )}
 
-            {f.ssh.enabled && f.driver !== "sqlite" && (
+            {f.ssh.enabled && !isLocal(f.driver) && (
               <div className="hint">
                 <Network /> Connecting through SSH {f.ssh.user || "root"}@{f.ssh.host || "server"}. The host above is
                 resolved on that server (often 127.0.0.1).

@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clickhouse";
+export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clickhouse" | "duckdb";
+
+/** Engines that open a local file in-process: no host, port, SSH or SSL. */
+export const isLocal = (d: Driver) => d === "sqlite" || d === "duckdb";
 /** Drivers that speak SQL (tables, queries, structure). */
 export type SqlDriver = Exclude<Driver, "redis">;
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
@@ -280,6 +283,7 @@ export const api = {
   applyAlter: (sessionId: string, req: AlterRequest) => invoke<string[]>("apply_alter", { sessionId, req }),
   pickCsvFile: () => invoke<{ name: string; contents: string } | null>("pick_csv_file"),
   pickSqliteFile: () => invoke<string | null>("pick_sqlite_file"),
+  pickDuckdbFile: () => invoke<string | null>("pick_duckdb_file"),
   pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>
     invoke<string | null>("export_file", { defaultName, contents }),

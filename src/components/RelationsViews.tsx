@@ -42,7 +42,7 @@ export function RelationsView({ session, schema, table, editable }: { session: S
       </div>
     );
   const sel = rel.outgoing.find((f) => f.name === selected);
-  const canAlter = editable && d !== "sqlite";
+  const canAlter = editable && d !== "sqlite" && d !== "duckdb";
 
   return (
     <div className="structure">
@@ -89,10 +89,10 @@ export function RelationsView({ session, schema, table, editable }: { session: S
           </button>
           <span className="sg-count">
             {rel.outgoing.length} key{rel.outgoing.length === 1 ? "" : "s"}
-            {d === "sqlite" && editable && (
+            {(d === "sqlite" || d === "duckdb") && editable && (
               <span className="dim">
                 {" "}
-                · <Info size={11} style={{ verticalAlign: -1 }} /> SQLite can only define keys when a table is created
+                · <Info size={11} style={{ verticalAlign: -1 }} /> {d === "sqlite" ? "SQLite" : "DuckDB"} can only define keys when a table is created
               </span>
             )}
           </span>
@@ -237,7 +237,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
 ]);
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL, clickhouse: StandardSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL, clickhouse: StandardSQL, duckdb: PostgreSQL };
 
 function triggerTemplate(d: Driver, schema: string, table: string): string {
   const tq = `${quoteIdent(d, schema)}.${quoteIdent(d, table)}`;

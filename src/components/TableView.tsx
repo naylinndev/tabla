@@ -454,7 +454,7 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
             ] as const
           )
             // ClickHouse has no foreign keys or triggers.
-            .filter(([id]) => session.connection.driver !== "clickhouse" || (id !== "relations" && id !== "triggers"))
+            .filter(([id]) => (session.connection.driver !== "clickhouse" || (id !== "relations" && id !== "triggers")) && (session.connection.driver !== "duckdb" || id !== "triggers"))
             .map(([id, label, icon]) => (
             <button key={id} className={tab.view === id ? "on" : ""} onClick={() => updateTab(session.id, tab.id, { view: id })} title={label}>
               {icon} <span className="lbl">{label}</span>

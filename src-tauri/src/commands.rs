@@ -193,7 +193,7 @@ pub fn scan_env_dir(dir: &Path) -> AppResult<Vec<EnvUrl>> {
             let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
             let lower = value.to_ascii_lowercase();
             let is_db = [
-                "postgres://", "postgresql://", "mysql://", "mariadb://", "sqlite:", "file:", "redis://", "rediss://",
+                "postgres://", "postgresql://", "mysql://", "mariadb://", "sqlite:", "file:", "duckdb:", "redis://", "rediss://",
                 "sqlserver://", "mssql://", "jdbc:sqlserver://", "clickhouse://", "clickhouses://",
             ]
             .iter()
@@ -446,6 +446,18 @@ pub async fn pick_sqlite_file(app: AppHandle) -> AppResult<Option<String>> {
         .dialog()
         .file()
         .add_filter("SQLite database", &["db", "sqlite", "sqlite3", "db3"])
+        .add_filter("All files", &["*"])
+        .blocking_pick_file();
+    Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Native file picker for DuckDB databases.
+#[tauri::command]
+pub async fn pick_duckdb_file(app: AppHandle) -> AppResult<Option<String>> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("DuckDB database", &["duckdb", "ddb", "db"])
         .add_filter("All files", &["*"])
         .blocking_pick_file();
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
