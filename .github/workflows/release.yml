@@ -1,12 +1,17 @@
 name: Release
 
-# Push a tag like v0.2.0 to build installers for macOS (Apple Silicon + Intel),
-# Windows and Linux, attach them to a draft GitHub Release, and (when the tap
-# token is configured) update the Homebrew cask.
+# Push a tag like v0.2.0, or run this workflow by hand with a version, to build
+# installers for macOS (Apple Silicon + Intel), Windows and Linux and attach
+# them to a draft GitHub Release (publishing it creates the tag). When the tap
+# token is configured, the Homebrew cask is updated too.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. 0.1.0 (must match tauri.conf.json)"
+        required: true
 
 permissions:
   contents: write
@@ -31,6 +36,7 @@ jobs:
             rust_targets: ""
     runs-on: ${{ matrix.platform }}
     env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
       HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
       HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && vars.TAURI_UPDATER_PUBKEY != '' }}
     steps:
@@ -54,6 +60,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
       - run: pnpm install --frozen-lockfile
+      - name: Check the version
+        shell: bash
+        run: |
+          APP=$(node -p 'require("./src-tauri/tauri.conf.json").version')
+          if [ "v$APP" != "$TAG" ]; then
+            echo "::error::Release $TAG does not match tauri.conf.json version $APP"
+            exit 1
+          fi
 
       # Code signing switches on automatically once these secrets exist
       # (Apple Developer ID). Without them the build is unsigned.
@@ -91,8 +105,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Tabla ${{ github.ref_name }}
+          tagName: ${{ env.TAG }}
+          releaseName: Tabla ${{ env.TAG }}
           releaseBody: |
             See the README for install options. macOS: `brew tap naylinndev/tabla && brew install --cask tabla`.
           releaseDraft: true
