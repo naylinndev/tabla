@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CheckCircle2, Copy, Download, Search, Trash2, X, XCircle } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
-import { useApp, type Session } from "../lib/store";
+import { local, useApp, type Session } from "../lib/store";
 import { Checkbox } from "./controls";
+import { useDrag } from "./ui";
 
 interface LogEntry {
   id: number;
@@ -22,6 +23,13 @@ export function Console({ session, onClose }: { session: Session; onClose(): voi
   const [hideMeta, setHideMeta] = useState(false);
   const last = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
+  // Drag the top edge to resize; the height is remembered.
+  const [height, setHeight] = useState(() => local.get("tabla.consoleHeight", 260));
+  const startH = useRef(height);
+  const drag = useDrag(
+    (_, dy) => setHeight(Math.round(Math.max(120, Math.min(window.innerHeight - 160, startH.current - dy)))),
+    () => setHeight((h) => (local.set("tabla.consoleHeight", h), h)),
+  );
 
   useEffect(() => {
     let alive = true;
@@ -52,7 +60,15 @@ export function Console({ session, onClose }: { session: Session; onClose(): voi
   const asText = () => shown.map((e) => `-- ${new Date(e.at).toLocaleString()} · ${e.ms} ms · ${e.ok ? e.info : "ERROR: " + e.info}\n${e.sql};`).join("\n\n");
 
   return (
-    <div className="console">
+    <div className="console" style={{ height }}>
+      <div
+        className={`q-split console-split ${drag.active ? "on" : ""}`}
+        title="Drag to resize"
+        onMouseDown={(e) => {
+          startH.current = height;
+          drag.start(e);
+        }}
+      />
       <div className="console-head">
         <b>Console</b>
         <span className="dim">{session.connection.name}</span>
