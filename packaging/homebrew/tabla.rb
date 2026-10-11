@@ -12,7 +12,7 @@ cask "tabla" do
   desc "Free, open-source database client for PostgreSQL, MySQL, Oracle, SQLite and more"
   homepage "https://github.com/naylinndev/tabla"
 
-  depends_on macos: ">= :big_sur"
+  depends_on macos: :big_sur
 
   app "Tabla.app"
   # Puts `tabla` on PATH so AI tools can run `tabla mcp`.
