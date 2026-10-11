@@ -44,6 +44,19 @@ jobs:
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
             echo "Removed tag $TAG, which no release uses."
           fi
+      # The four builds run at once; if none finds a draft, several create one and
+      # the installers end up split across them. Create the one draft up front.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ inputs.version }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | grep -q .; then
+            echo "Draft $TAG already exists; the builds will upload to it."
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" --title "Tabla $TAG" \
+              --notes 'See the README for install options. macOS: `brew tap naylinndev/tabla && brew install --cask tabla`.'
+          fi
 
   build:
     needs: prepare
