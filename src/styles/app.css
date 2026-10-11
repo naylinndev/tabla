@@ -3905,3 +3905,38 @@ pre.grants {
   border-color: rgba(255, 255, 255, 0.35);
   border-top-color: #fff;
 }
+
+/* Support / donation */
+.home-foot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 0 36px;
+  font-size: 12.5px;
+}
+.home-foot .btn svg {
+  color: #ff5d7a;
+}
+.support {
+  align-items: center;
+  text-align: center;
+}
+.support-qr {
+  width: 200px;
+  height: 200px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+.support-addr {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  user-select: all;
+  word-break: break-all;
+}

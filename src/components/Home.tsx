@@ -18,7 +18,8 @@ import { detectProvider } from "../lib/providers";
 import { newConnection, useApp } from "../lib/store";
 import { DriverIcon, Logo } from "./icons";
 import { providerById } from "../lib/providers";
-import { Bot, FileSearch } from "lucide-react";
+import { Bot, FileSearch, Heart } from "lucide-react";
+import { SupportDialog } from "./Support";
 import { Kbd, Modal, TagBadge } from "./ui";
 
 /** Hides the password part of a URL for display. */
@@ -44,6 +45,7 @@ export function Home() {
   const [q, setQ] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<ConnectionConfig | null>(null);
   const [envFound, setEnvFound] = useState<EnvUrl[] | null>(null);
+  const [support, setSupport] = useState(false);
   const setAiOpen = useApp((s) => s.setAiOpen);
 
   const importEnv = async () => {
@@ -250,6 +252,14 @@ export function Home() {
           </div>
         </div>
       </div>
+
+      <div className="home-foot">
+        <span className="dim">Tabla is free and open source (MIT).</span>
+        <button className="btn ghost" onClick={() => setSupport(true)}>
+          <Heart /> Support Tabla
+        </button>
+      </div>
+      {support && <SupportDialog onClose={() => setSupport(false)} />}
 
       {envFound && (
         <Modal onClose={() => setEnvFound(null)}>

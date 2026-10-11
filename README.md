@@ -7,7 +7,7 @@
 A fast, native, open-source database client for macOS, Windows and Linux,
 for PostgreSQL, MySQL, MariaDB, SQLite, Redis and the clouds they run on.
 
-[Download](https://github.com/naylinndev/tabla/releases/latest) · [Docs](#features) · [Releases](https://github.com/naylinndev/tabla/releases) · [Security](SECURITY.md)
+[Download](https://github.com/naylinndev/tabla/releases/latest) · [Docs](#features) · [Releases](https://github.com/naylinndev/tabla/releases) · [Security](SECURITY.md) · [Support](#support-tabla)
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-0aa2ff?style=for-the-badge)](LICENSE)
 [![CI](https://img.shields.io/github/actions/workflow/status/naylinndev/tabla/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/naylinndev/tabla/actions/workflows/ci.yml)
@@ -250,6 +250,21 @@ src-tauri/            Rust backend
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for setup, tests and guidelines, and [SECURITY.md](SECURITY.md) to report a
 vulnerability privately.
+
+## Support Tabla
+
+Tabla is free and always will be. If it saves you time, you can support its
+development with a Bitcoin donation:
+
+<p align="center">
+  <img src="docs/donate-btc.svg" width="180" alt="Bitcoin donation QR code" />
+</p>
+
+<p align="center"><code>bc1qjssygyqayth4sm8zcw7kq56ml3rvl3vsm24qq9</code></p>
+
+Native SegWit (bc1q) address, on-chain Bitcoin only. Please double-check the
+address in your wallet before sending. Starring the repo, reporting bugs and
+sharing Tabla help a lot too.
 
 ## License
 
