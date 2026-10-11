@@ -28,6 +28,7 @@ mod config;
 mod db;
 mod error;
 mod mcp;
+mod mongo_db;
 mod mssql;
 mod redis_db;
 mod ssh;
@@ -75,6 +76,15 @@ pub fn run() {
             commands::redis_get,
             commands::redis_edit,
             commands::redis_command,
+            commands::mongo_overview,
+            commands::mongo_collections,
+            commands::mongo_find,
+            commands::mongo_insert,
+            commands::mongo_replace,
+            commands::mongo_set_field,
+            commands::mongo_delete,
+            commands::mongo_indexes,
+            commands::mongo_shell,
             commands::run_query,
             commands::cancel_query,
             commands::apply_edits,

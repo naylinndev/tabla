@@ -144,6 +144,37 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         "redis_get" => json!(state.get_redis(&sid()?)?.get(&arg::<String>(&a, "key")?).await?),
         "redis_edit" => json!(state.get_redis(&sid()?)?.edit(arg(&a, "edit")?).await?),
         "redis_command" => json!(state.get_redis(&sid()?)?.command(&arg::<String>(&a, "line")?, arg(&a, "allowWrite")?).await?),
+        "mongo_overview" => json!(state.get_mongo(&sid()?)?.overview().await?),
+        "mongo_collections" => json!(state.get_mongo(&sid()?)?.collections(&arg::<String>(&a, "db")?).await?),
+        "mongo_find" => json!(state.get_mongo(&sid()?)?.find(&arg(&a, "args")?).await?),
+        "mongo_insert" => json!(
+            state.get_mongo(&sid()?)?.insert(&arg::<String>(&a, "db")?, &arg::<String>(&a, "collection")?, &arg::<String>(&a, "json")?).await?
+        ),
+        "mongo_replace" => json!(
+            state
+                .get_mongo(&sid()?)?
+                .replace(&arg::<String>(&a, "db")?, &arg::<String>(&a, "collection")?, &arg::<String>(&a, "id")?, &arg::<String>(&a, "json")?)
+                .await?
+        ),
+        "mongo_set_field" => json!(
+            state
+                .get_mongo(&sid()?)?
+                .set_field(
+                    &arg::<String>(&a, "db")?,
+                    &arg::<String>(&a, "collection")?,
+                    &arg::<String>(&a, "id")?,
+                    &arg::<String>(&a, "field")?,
+                    arg::<Option<String>>(&a, "value")?.as_deref()
+                )
+                .await?
+        ),
+        "mongo_delete" => json!(
+            state.get_mongo(&sid()?)?.delete(&arg::<String>(&a, "db")?, &arg::<String>(&a, "collection")?, &arg::<Vec<String>>(&a, "ids")?).await?
+        ),
+        "mongo_indexes" => json!(state.get_mongo(&sid()?)?.indexes(&arg::<String>(&a, "db")?, &arg::<String>(&a, "collection")?).await?),
+        "mongo_shell" => json!(
+            state.get_mongo(&sid()?)?.shell(&arg::<String>(&a, "db")?, &arg::<String>(&a, "line")?, arg(&a, "allowWrite")?).await?
+        ),
         "list_users" => json!(state.get(&sid()?)?.list_users().await?),
         "user_grants" => json!(state.get(&sid()?)?.user_grants(&arg::<String>(&a, "name")?, &arg::<String>(&a, "host")?).await?),
         "schema_graph" => json!(state.get(&sid()?)?.schema_graph(&arg::<String>(&a, "schema")?).await?),

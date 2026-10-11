@@ -2,7 +2,7 @@ import { api } from "./api";
 import { providerById } from "./providers";
 import type { Session } from "./store";
 
-const ENGINE = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse" } as const;
+const ENGINE = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse", mongodb: "MongoDB" } as const;
 
 export function engineLabel(s: Session) {
   const p = providerById(s.connection.provider, s.connection.driver);

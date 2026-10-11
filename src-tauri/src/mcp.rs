@@ -159,7 +159,7 @@ async fn call_tool(state: &mut State, params: &Value) -> Value {
 }
 
 fn shared() -> AppResult<Vec<ConnectionConfig>> {
-    Ok(config::load()?.into_iter().filter(|c| c.ai_access && c.driver != config::Driver::Redis).collect())
+    Ok(config::load()?.into_iter().filter(|c| c.ai_access && !matches!(c.driver, config::Driver::Redis | config::Driver::Mongodb)).collect())
 }
 
 fn list_connections() -> AppResult<String> {
@@ -179,6 +179,7 @@ fn list_connections() -> AppResult<String> {
                 config::Driver::Redis => "Redis",
                 config::Driver::Mssql => "SQL Server",
                 config::Driver::Clickhouse => "ClickHouse",
+                config::Driver::Mongodb => "MongoDB",
             };
             let provider = if c.provider.is_empty() || c.provider == format!("{:?}", c.driver).to_lowercase() {
                 String::new()

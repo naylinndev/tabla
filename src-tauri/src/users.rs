@@ -79,7 +79,7 @@ impl Session {
                 )
                 .await
                 .map_err(|e| AppError::msg(format!("Can't list accounts: {e}. Your user needs the SHOW USERS privilege.")))?,
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };
         Ok(rows
@@ -144,7 +144,7 @@ impl Session {
                      JOIN sys.database_principals u ON u.principal_id = m.member_principal_id WHERE u.name = {r} OR u.sid = SUSER_SID({r})"
                 )
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };
         let rows = self.run_script(&sql, 10_000).await?;

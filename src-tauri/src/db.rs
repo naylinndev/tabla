@@ -355,7 +355,7 @@ impl Session {
             }
             Driver::Clickhouse => Pool::Ch(crate::clickhouse::ChClient::connect(cfg, host, port, password.clone()).await?),
             Driver::Mssql => Pool::Ms(crate::mssql::MsPool::connect(crate::mssql::build_config(cfg, host, port, db_host, password.clone())).await?),
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 if cfg.database.trim().is_empty() {
                     return Err(AppError::msg("Choose a SQLite database file"));
@@ -599,7 +599,7 @@ impl Session {
             Driver::Mysql => "SELECT VERSION()",
             Driver::Clickhouse => "SELECT version()",
             Driver::Mssql => "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)) + N' ' + CAST(SERVERPROPERTY('Edition') AS nvarchar(128))",
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT sqlite_version()",
         };
         let rows = self.text_rows(sql).await?;
@@ -624,7 +624,7 @@ impl Session {
                 "SELECT name FROM sys.schemas WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest') AND name NOT LIKE 'db[_]%' \
                  ORDER BY CASE WHEN name = 'dbo' THEN 0 ELSE 1 END, name"
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT name FROM pragma_database_list ORDER BY seq",
         };
         Ok(self.text_rows(sql).await?.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect())
@@ -636,7 +636,7 @@ impl Session {
             Driver::Mysql => "SELECT DATABASE()",
             Driver::Mssql => "SELECT SCHEMA_NAME()",
             Driver::Clickhouse => "SELECT currentDatabase()",
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Ok(Some("main".into())),
         };
         Ok(self.text_rows(sql).await?.into_iter().next().and_then(|r| r.into_iter().next().flatten()))
@@ -663,7 +663,7 @@ impl Session {
                 "SELECT o.name, RTRIM(o.type), (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
                  FROM sys.objects o WHERE o.schema_id = SCHEMA_ID({lit}) AND o.type IN ('U', 'V') ORDER BY o.name"
             ),
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT name, type, NULL FROM {}.sqlite_master WHERE type IN ('table','view') \
                  AND name NOT LIKE 'sqlite_%' ORDER BY name",
@@ -763,7 +763,7 @@ impl Session {
                     })
                     .collect()
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let sql = format!(
                     "SELECT name, type, \"notnull\" = 0, dflt_value, pk > 0, CASE WHEN pk > 0 THEN 'PRI' ELSE '' END, \
@@ -806,7 +806,7 @@ impl Session {
                  WHERE i.object_id = OBJECT_ID({}) AND i.type > 0 ORDER BY i.is_primary_key DESC, i.name",
                 d.quote_literal(&d.qualified(schema, table))
             ),
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT il.name, COALESCE(m.sql, '(automatic index)'), il.\"unique\", il.origin = 'pk', 'btree', \
                  (SELECT group_concat(ii.name, ', ') FROM pragma_index_info(il.name, {s}) ii) \
@@ -863,7 +863,7 @@ impl Session {
                  WHERE o.schema_id = SCHEMA_ID({s}) AND o.type IN ('U', 'V') ORDER BY o.name, c.column_id"
             )),
             Driver::Sqlite => None,
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
         };
         match col_sql {
             Some(sql) => {
@@ -948,7 +948,7 @@ impl Session {
                     parse_fks(self.text_rows(&format!("{MS_FK_BASE} AND fk.referenced_object_id = OBJECT_ID({obj}) ORDER BY 2, 3, 1")).await?, false),
                 )
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let one = |tbl: &str| {
                     format!(
@@ -995,7 +995,7 @@ impl Session {
                  FROM sys.triggers tr WHERE tr.parent_id = OBJECT_ID({}) ORDER BY tr.name",
                 d.quote_literal(&d.qualified(schema, table))
             ),
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT name, CASE WHEN upper(sql) LIKE '%INSTEAD OF%' THEN 'INSTEAD OF' WHEN upper(sql) LIKE '%BEFORE%' THEN 'BEFORE' ELSE 'AFTER' END, \
                  CASE WHEN upper(sql) LIKE '%INSERT%ON%' THEN 'INSERT' WHEN upper(sql) LIKE '%DELETE%ON%' THEN 'DELETE' ELSE 'UPDATE' END, \
@@ -1196,7 +1196,7 @@ impl Session {
                     self.pg_ddl(schema, table).await?
                 });
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let q = d.quote_ident(schema);
                 let ddl = first(self.text_rows(&format!("SELECT sql FROM {q}.sqlite_master WHERE name = {t}")).await?);

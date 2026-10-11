@@ -21,7 +21,7 @@ export function Logo({ size = 28 }: { size?: number }) {
   );
 }
 
-const DRIVER_LABEL: Record<Driver, string> = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse" };
+const DRIVER_LABEL: Record<Driver, string> = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse", mongodb: "MongoDB" };
 
 export const driverLabel = (d: Driver) => DRIVER_LABEL[d];
 

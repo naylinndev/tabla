@@ -58,7 +58,7 @@ pub fn ms_message(e: &tiberius::error::Error) -> String {
     }
 }
 
-/// Returned by SQL-only code paths if they are ever reached for a Redis session.
+/// Returned by SQL-only code paths if they are ever reached for a Redis or MongoDB session.
 pub fn not_sql() -> AppError {
-    AppError::msg("This isn't available for Redis connections")
+    AppError::msg("This isn't available for Redis or MongoDB connections")
 }

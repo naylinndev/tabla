@@ -24,6 +24,7 @@ pub enum Driver {
     Redis,
     Mssql,
     Clickhouse,
+    Mongodb,
 }
 
 impl Driver {
@@ -35,6 +36,7 @@ impl Driver {
             Driver::Redis => 6379,
             Driver::Mssql => 1433,
             Driver::Clickhouse => 8123,
+            Driver::Mongodb => 27017,
         }
     }
 

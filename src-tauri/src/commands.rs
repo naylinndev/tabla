@@ -15,6 +15,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::{
     alter::AlterRequest,
     config::Driver,
+    mongo_db::{CollectionInfo, FindArgs as MongoFindArgs, FindPage, IndexInfo as MongoIndex, MongoOverview, MongoSession},
     redis_db::{RedisEdit, RedisOverview, RedisSession, RedisValue, ScanPage},
     users::UserInfo,
     config::{self, ConnectionConfig},
@@ -30,6 +31,7 @@ const MAX_QUERY_ROWS: usize = 200_000;
 pub enum AnySession {
     Sql(Arc<Session>),
     Redis(Arc<RedisSession>),
+    Mongo(Arc<MongoSession>),
 }
 
 #[derive(Default)]
@@ -79,7 +81,15 @@ impl AppState {
     pub fn get(&self, id: &str) -> AppResult<Arc<Session>> {
         match self.sessions.lock().unwrap().get(id) {
             Some(AnySession::Sql(s)) => Ok(s.clone()),
-            Some(AnySession::Redis(_)) => Err(crate::error::not_sql()),
+            Some(_) => Err(crate::error::not_sql()),
+            None => Err(Self::closed()),
+        }
+    }
+
+    pub fn get_mongo(&self, id: &str) -> AppResult<Arc<MongoSession>> {
+        match self.sessions.lock().unwrap().get(id) {
+            Some(AnySession::Mongo(s)) => Ok(s.clone()),
+            Some(_) => Err(AppError::msg("Not a MongoDB connection")),
             None => Err(Self::closed()),
         }
     }
@@ -87,7 +97,7 @@ impl AppState {
     pub fn get_redis(&self, id: &str) -> AppResult<Arc<RedisSession>> {
         match self.sessions.lock().unwrap().get(id) {
             Some(AnySession::Redis(s)) => Ok(s.clone()),
-            Some(AnySession::Sql(_)) => Err(AppError::msg("Not a Redis connection")),
+            Some(_) => Err(AppError::msg("Not a Redis connection")),
             None => Err(Self::closed()),
         }
     }
@@ -97,6 +107,12 @@ impl AppState {
         if config.driver == Driver::Redis {
             let s = RedisSession::open(&config, password).await?;
             return Ok(s.overview().await?.version);
+        }
+        if config.driver == Driver::Mongodb {
+            let s = MongoSession::open(&config, password).await?;
+            let v = s.overview().await?.version;
+            s.close().await;
+            return Ok(v);
         }
         let session = Session::connect(&config, password).await?;
         let version = session.server_version().await;
@@ -115,6 +131,12 @@ impl AppState {
             self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Redis(Arc::new(s)));
             return Ok(SessionInfo { session_id, server_version: ov.version, schemas, current_schema: Some(current) });
         }
+        if config.driver == Driver::Mongodb {
+            let s = MongoSession::open(&config, password).await?;
+            let ov = s.overview().await?;
+            self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Mongo(Arc::new(s)));
+            return Ok(SessionInfo { session_id, server_version: ov.version, schemas: ov.databases, current_schema: Some(ov.current) });
+        }
         let session = Session::connect(&config, password).await?;
         let server_version = session.server_version().await?;
         let schemas = session.list_schemas().await?;
@@ -128,6 +150,7 @@ impl AppState {
         match session {
             Some(AnySession::Sql(s)) => s.close().await,
             Some(AnySession::Redis(s)) => s.close().await,
+            Some(AnySession::Mongo(s)) => s.close().await,
             None => {}
         }
     }
@@ -136,6 +159,7 @@ impl AppState {
         match self.sessions.lock().unwrap().get(id) {
             Some(AnySession::Sql(s)) => Ok(s.log_since(after)),
             Some(AnySession::Redis(s)) => Ok(s.log_since(after)),
+            Some(AnySession::Mongo(s)) => Ok(s.log_since(after)),
             None => Err(Self::closed()),
         }
     }
@@ -144,6 +168,7 @@ impl AppState {
         match self.sessions.lock().unwrap().get(id) {
             Some(AnySession::Sql(s)) => s.clear_log(),
             Some(AnySession::Redis(s)) => s.clear_log(),
+            Some(AnySession::Mongo(s)) => s.clear_log(),
             None => return Err(Self::closed()),
         }
         Ok(())
@@ -346,6 +371,59 @@ pub async fn redis_edit(state: State<'_, AppState>, session_id: String, edit: Re
 #[tauri::command]
 pub async fn redis_command(state: State<'_, AppState>, session_id: String, line: String, allow_write: bool) -> AppResult<String> {
     state.get_redis(&session_id)?.command(&line, allow_write).await
+}
+
+#[tauri::command]
+pub async fn mongo_collections(state: State<'_, AppState>, session_id: String, db: String) -> AppResult<Vec<CollectionInfo>> {
+    state.get_mongo(&session_id)?.collections(&db).await
+}
+
+#[tauri::command]
+pub async fn mongo_overview(state: State<'_, AppState>, session_id: String) -> AppResult<MongoOverview> {
+    state.get_mongo(&session_id)?.overview().await
+}
+
+#[tauri::command]
+pub async fn mongo_find(state: State<'_, AppState>, session_id: String, args: MongoFindArgs) -> AppResult<FindPage> {
+    state.get_mongo(&session_id)?.find(&args).await
+}
+
+#[tauri::command]
+pub async fn mongo_insert(state: State<'_, AppState>, session_id: String, db: String, collection: String, json: String) -> AppResult<String> {
+    state.get_mongo(&session_id)?.insert(&db, &collection, &json).await
+}
+
+#[tauri::command]
+pub async fn mongo_replace(state: State<'_, AppState>, session_id: String, db: String, collection: String, id: String, json: String) -> AppResult<()> {
+    state.get_mongo(&session_id)?.replace(&db, &collection, &id, &json).await
+}
+
+#[tauri::command]
+pub async fn mongo_set_field(
+    state: State<'_, AppState>,
+    session_id: String,
+    db: String,
+    collection: String,
+    id: String,
+    field: String,
+    value: Option<String>,
+) -> AppResult<()> {
+    state.get_mongo(&session_id)?.set_field(&db, &collection, &id, &field, value.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn mongo_delete(state: State<'_, AppState>, session_id: String, db: String, collection: String, ids: Vec<String>) -> AppResult<u64> {
+    state.get_mongo(&session_id)?.delete(&db, &collection, &ids).await
+}
+
+#[tauri::command]
+pub async fn mongo_indexes(state: State<'_, AppState>, session_id: String, db: String, collection: String) -> AppResult<Vec<MongoIndex>> {
+    state.get_mongo(&session_id)?.indexes(&db, &collection).await
+}
+
+#[tauri::command]
+pub async fn mongo_shell(state: State<'_, AppState>, session_id: String, db: String, line: String, allow_write: bool) -> AppResult<String> {
+    state.get_mongo(&session_id)?.shell(&db, &line, allow_write).await
 }
 
 #[tauri::command]
