@@ -28,6 +28,24 @@ picks them up automatically:
 | `APPLE_ID` / `APPLE_PASSWORD` | Apple ID and an app-specific password, for notarization |
 | `APPLE_TEAM_ID` | your 10-character team ID |
 
+How to get each value (on a Mac):
+
+1. **Certificate.** Keychain Access → Certificate Assistant → *Request a
+   Certificate From a Certificate Authority*, save to disk. At
+   developer.apple.com → Certificates → **+** → *Developer ID Application*,
+   upload that request, download the `.cer` and double-click it.
+2. **Export it.** In Keychain Access → *My Certificates*, right-click
+   *Developer ID Application: …* → Export → `.p12` with a password, then
+   `base64 -i cert.p12 | pbcopy` for `APPLE_CERTIFICATE`.
+3. **Identity.** `security find-identity -v -p codesigning` prints the exact
+   `Developer ID Application: Name (TEAMID)` string.
+4. **App-specific password.** account.apple.com → Sign-In and Security →
+   App-Specific Passwords; that is `APPLE_PASSWORD`.
+5. **Team ID.** developer.apple.com → Account → Membership details.
+
+The app is built with the hardened runtime and `src-tauri/Entitlements.plist`,
+which allows loading Oracle Instant Client (signed by Oracle, not by you).
+
 ## One-click updates (recommended)
 
 Release builds can download, verify and install new versions themselves
