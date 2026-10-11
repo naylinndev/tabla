@@ -253,6 +253,8 @@ interface SessionInfo {
   sessionId: string;
   serverVersion: string;
   schemas: string[];
+  /** Built-in databases (mysql, pg_catalog, admin…), shown apart and read-only. */
+  systemSchemas: string[];
   currentSchema: string | null;
 }
 

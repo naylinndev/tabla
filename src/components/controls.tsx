@@ -7,6 +7,8 @@ export interface Option<T extends string | number = string> {
   label: string;
   icon?: ReactNode;
   hint?: string;
+  /** Options sharing a group are listed under its heading (keep them adjacent). */
+  group?: string;
 }
 
 /** Positions a popover under (or above, if there's no room) its anchor. */
@@ -73,7 +75,12 @@ function ListBox<T extends string | number>({
   return createPortal(
     <div ref={listRef} className="listbox" role="listbox" style={style} onMouseDown={(e) => e.preventDefault()}>
       {options.length === 0 && <div className="listbox-empty">{empty ?? "No matches"}</div>}
-      {options.map((o, i) => (
+      {options.map((o, i) => [
+        o.group && o.group !== options[i - 1]?.group && (
+          <div key={`g-${o.group}`} className="listbox-group" role="presentation">
+            {o.group}
+          </div>
+        ),
         <div
           key={String(o.value)}
           data-i={i}
@@ -87,8 +94,8 @@ function ListBox<T extends string | number>({
           {o.icon && <span className="li-icon">{o.icon}</span>}
           <span className="li-label">{o.label}</span>
           {o.hint && <span className="li-hint">{o.hint}</span>}
-        </div>
-      ))}
+        </div>,
+      ])}
     </div>,
     document.body,
   );
@@ -147,7 +154,9 @@ export function Select<T extends string | number>({
     else if (e.key === "Home") setActive(0);
     else if (e.key === "End") setActive(options.length - 1);
     else if (e.key === "Enter" || e.key === " ") options[active] && pick(options[active]);
-    else if (e.key === "Escape" || e.key === "Tab") return setOpen(false);
+    else if (e.key === "Tab") return setOpen(false);
+    // Escape closes the list only, not the dialog around it.
+    else if (e.key === "Escape") setOpen(false);
     else if (e.key.length === 1) {
       const now = Date.now();
       typed.current.text = (now - typed.current.at > 700 ? "" : typed.current.text) + e.key.toLowerCase();
@@ -255,7 +264,11 @@ export function Combobox({
           } else if (e.key === "Enter" && open && options[active]) {
             e.preventDefault();
             pick(options[active]);
-          } else if (e.key === "Escape") setOpen(false);
+          } else if (e.key === "Escape" && open) {
+            // Close the list only, not the dialog around it.
+            e.stopPropagation();
+            setOpen(false);
+          }
         }}
       />
       {!disabled && (

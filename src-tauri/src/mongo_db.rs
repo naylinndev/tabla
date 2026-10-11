@@ -37,6 +37,8 @@ pub struct MongoSession {
 pub struct MongoOverview {
     pub version: String,
     pub databases: Vec<String>,
+    /// admin, local and config, when this user can see them.
+    pub system: Vec<String>,
     pub current: String,
 }
 
@@ -194,9 +196,11 @@ impl MongoSession {
         if !databases.contains(&self.default_db) {
             databases.push(self.default_db.clone());
         }
-        databases.retain(|d| !matches!(d.as_str(), "admin" | "local" | "config") || *d == self.default_db);
+        let is_system = |d: &str| matches!(d, "admin" | "local" | "config");
+        let system: Vec<String> = databases.iter().filter(|d| is_system(d) && **d != self.default_db).cloned().collect();
+        databases.retain(|d| !is_system(d) || *d == self.default_db);
         databases.sort();
-        Ok(MongoOverview { version, databases, current: self.default_db.clone() })
+        Ok(MongoOverview { version, databases, system, current: self.default_db.clone() })
     }
 
     pub async fn collections(&self, db: &str) -> AppResult<Vec<CollectionInfo>> {

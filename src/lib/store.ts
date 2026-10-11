@@ -27,6 +27,7 @@ export interface Session {
   connection: ConnectionConfig;
   serverVersion: string;
   schemas: string[];
+  systemSchemas: string[];
   schema: string;
   tables: TableInfo[];
   tablesLoading: boolean;
@@ -72,6 +73,8 @@ interface State {
   closeSession(id: string): Promise<void>;
   setActiveSession(id: string | null): void;
   setSchema(sessionId: string, schema: string): Promise<void>;
+  /** Re-reads the database/schema list (after creating one) and switches to `select`. */
+  reloadSchemas(sessionId: string, select?: string): Promise<void>;
   refreshTables(sessionId: string): Promise<void>;
   setColumns(sessionId: string, table: string, cols: string[]): void;
   openTable(sessionId: string, schema: string, table: string, view?: TableView, forceNew?: boolean, initialFilter?: TableTab["initialFilter"]): void;
@@ -211,6 +214,7 @@ export const useApp = create<State>((set, get) => {
           connection: { ...c, password: undefined, sshSecret: undefined },
           serverVersion: info.serverVersion,
           schemas: info.schemas,
+          systemSchemas: info.systemSchemas,
           schema,
           tables: [],
           tablesLoading: true,
@@ -248,6 +252,16 @@ export const useApp = create<State>((set, get) => {
     async setSchema(sessionId, schema) {
       patchSession(sessionId, () => ({ schema, columns: {} }));
       await get().refreshTables(sessionId);
+    },
+
+    async reloadSchemas(sessionId, select) {
+      try {
+        const schemas = await api.listSchemas(sessionId);
+        patchSession(sessionId, () => ({ schemas }));
+        if (select && schemas.includes(select)) await get().setSchema(sessionId, select);
+      } catch (e) {
+        get().toast(errorMessage(e), "error");
+      }
     },
 
     async refreshTables(sessionId) {
@@ -450,4 +464,9 @@ export function newConnection(): ConnectionConfig {
     readOnly: false,
     aiAccess: false,
   };
+}
+
+/** Built-in databases are browsable but never edited from the UI. */
+export function isSystemSchema(s: Pick<Session, "systemSchemas">, schema: string) {
+  return s.systemSchemas.includes(schema);
 }

@@ -27,6 +27,7 @@ Redis and the clouds they run on.
 - **Native and light.** Rust core with a React UI on Tauri. The app is roughly 10 MB, not 150 MB.
 - **Built for live production databases.** Connect through **SSH tunnels** (private key with passphrase, SSH agent, or password) with host-key verification, and use **TLS client certificates** (CA, client cert and key).
 - **Structure editing.** Add, rename, retype and drop columns, change nullability and defaults, and **drag and drop to reorder** them. Tabla always shows the exact SQL first; Postgres changes run in one transaction.
+- **Databases and schemas.** Create a database (MySQL encoding and collation included) or schema from the sidebar. Built-in ones like `mysql`, `pg_catalog` or MongoDB's `admin` are listed apart under *System* and open read-only, so nobody edits them by mistake.
 - **Connect your AI.** Tabla is an **MCP server** (`tabla mcp`): Claude Code, Cursor, Claude Desktop, Windsurf and VS Code can read the databases you choose. AI access is read-only, guarded, and off by default for every connection.
 - **Easy connections.** Import connections from a project's `.env` files (`DATABASE_URL` and similar), paste a URL, or follow step-by-step guides for each provider. Connection errors are explained in plain language with fix steps.
 - **Spreadsheet-style editing.** Double-click a cell to edit, insert and delete rows, then review and commit everything in one transaction with <kbd>⌘ S</kbd>.

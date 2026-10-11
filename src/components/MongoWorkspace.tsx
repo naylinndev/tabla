@@ -14,6 +14,7 @@ import {
   Folder,
   KeyRound,
   ListTree,
+  Lock,
   PenLine,
   Plus,
   Power,
@@ -26,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errorMessage, type MongoCollection, type MongoIndex, type MongoPage } from "../lib/api";
-import { useApp, local, type Session } from "../lib/store";
+import { isSystemSchema, useApp, local, type Session } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { Modal, TagBadge, useDrag } from "./ui";
 import { Checkbox, Select } from "./controls";
@@ -50,7 +51,8 @@ export function MongoWorkspace({ session, visible }: { session: Session; visible
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<"docs" | "shell">("docs");
   const [logOpen, setLogOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<"collection" | "database" | null>(null);
+  const system = isSystemSchema(session, db);
   const [width, setWidth] = useState(() => local.get("tabla.sidebarWidth", 300));
   const startW = useRef(width);
   const resize = useDrag((dx) => {
@@ -70,8 +72,11 @@ export function MongoWorkspace({ session, visible }: { session: Session; visible
     }
   }, [session.id, db, toast]);
 
+  // A collection to open once the database switch below has happened (new database).
+  const openAfterSwitch = useRef<string | null>(null);
   useEffect(() => {
-    setSelected(null);
+    setSelected(openAfterSwitch.current);
+    openAfterSwitch.current = null;
     load();
   }, [load]);
 
@@ -97,9 +102,30 @@ export function MongoWorkspace({ session, visible }: { session: Session; visible
               <Power />
             </button>
           </div>
-          <div style={{ marginBottom: 8 }}>
-            <Select size="sm" className="w-full" mono value={db} title="Database" options={session.schemas.map((d) => ({ value: d, label: d }))} onChange={(v) => setDb(String(v))} />
+          <div className="schema-pick">
+            <Select
+              size="sm"
+              className="w-full"
+              mono
+              value={db}
+              title="Database"
+              options={[
+                ...session.schemas.map((d) => ({ value: d, label: d })),
+                ...session.systemSchemas.map((d) => ({ value: d, label: d, group: "System" })),
+              ]}
+              onChange={(v) => setDb(String(v))}
+            />
+            {!c.readOnly && (
+              <button className="icon-btn" title="New database" onClick={() => setCreating("database")}>
+                <Plus size={14} />
+              </button>
+            )}
           </div>
+          {system && (
+            <div className="schema-note">
+              <Lock size={11} /> Built-in database: read-only here
+            </div>
+          )}
           <div className="sb-search">
             <Search />
             <input className="input" placeholder="Filter collections" value={q} onChange={(e) => setQ(e.target.value)} spellCheck={false} />
@@ -131,7 +157,7 @@ export function MongoWorkspace({ session, visible }: { session: Session; visible
           {!loading && shown.length === 0 && <div className="sb-empty">{q ? "No collections match" : "No collections in this database"}</div>}
         </div>
         <div className="sb-foot">
-          <button className="btn" onClick={() => setCreating(true)} disabled={c.readOnly}>
+          <button className="btn" onClick={() => setCreating("collection")} disabled={c.readOnly || system}>
             <Plus /> Collection
           </button>
           <button className={`btn ${view === "shell" ? "primary" : ""}`} onClick={() => setView(view === "shell" ? "docs" : "shell")}>
@@ -177,11 +203,18 @@ export function MongoWorkspace({ session, visible }: { session: Session; visible
       {creating && (
         <NewCollection
           session={session}
-          db={db}
-          onClose={() => setCreating(false)}
-          onCreated={(name) => {
-            setCreating(false);
-            load();
+          db={creating === "database" ? null : db}
+          onClose={() => setCreating(null)}
+          onCreated={(name, inDb) => {
+            setCreating(null);
+            if (inDb !== db) {
+              // MongoDB creates a database with its first collection; list it and switch to it.
+              useApp.setState((st) => ({
+                sessions: st.sessions.map((s) => (s.id === session.id && !s.schemas.includes(inDb) ? { ...s, schemas: [...s.schemas, inDb].sort() } : s)),
+              }));
+              openAfterSwitch.current = name;
+              setDb(inDb);
+            } else load();
             setSelected(name);
             setView("docs");
           }}
@@ -191,13 +224,18 @@ export function MongoWorkspace({ session, visible }: { session: Session; visible
   );
 }
 
-function NewCollection({ session, db, onClose, onCreated }: { session: Session; db: string; onClose(): void; onCreated(name: string): void }) {
+/** New collection in `db`, or (db = null) a new database with its first collection. */
+function NewCollection({ session, db, onClose, onCreated }: { session: Session; db: string | null; onClose(): void; onCreated(name: string, db: string): void }) {
   const [name, setName] = useState("");
+  const [dbName, setDbName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const target = db ?? dbName.trim();
+  const taken = db === null && [...session.schemas, ...session.systemSchemas].includes(target);
+  const ready = !!name.trim() && !!target && !taken;
   const create = async () => {
     try {
-      await api.mongoShell(session.id, db, JSON.stringify({ create: name.trim() }), true);
-      onCreated(name.trim());
+      await api.mongoShell(session.id, target, JSON.stringify({ create: name.trim() }), true);
+      onCreated(name.trim(), target);
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -207,14 +245,33 @@ function NewCollection({ session, db, onClose, onCreated }: { session: Session; 
       <div className="modal-head">
         <Folder />
         <div>
-          <h2>New collection</h2>
-          <p>In database {db}. Collections are also created automatically by the first insert.</p>
+          <h2>{db === null ? "New database" : "New collection"}</h2>
+          <p>
+            {db === null
+              ? "MongoDB creates a database together with its first collection."
+              : `In database ${db}. Collections are also created automatically by the first insert.`}
+          </p>
         </div>
       </div>
       <div className="modal-body">
+        {db === null && (
+          <div className="field">
+            <label>Database name</label>
+            <input className="input mono" autoFocus placeholder="shop" value={dbName} onChange={(e) => setDbName(e.target.value)} spellCheck={false} />
+            {taken && <small className="dim">A database named {target} already exists.</small>}
+          </div>
+        )}
         <div className="field">
-          <label>Name</label>
-          <input className="input mono" autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && create()} spellCheck={false} />
+          <label>{db === null ? "First collection" : "Name"}</label>
+          <input
+            className="input mono"
+            autoFocus={db !== null}
+            placeholder="orders"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && ready && create()}
+            spellCheck={false}
+          />
         </div>
         {error && <div className="q-error">{error}</div>}
       </div>
@@ -223,7 +280,7 @@ function NewCollection({ session, db, onClose, onCreated }: { session: Session; 
         <button className="btn" onClick={onClose}>
           Cancel
         </button>
-        <button className="btn primary" disabled={!name.trim()} onClick={create}>
+        <button className="btn primary" disabled={!ready} onClick={create}>
           Create
         </button>
       </div>
@@ -233,7 +290,7 @@ function NewCollection({ session, db, onClose, onCreated }: { session: Session; 
 
 function CollectionView({ session, db, collection, readOnlyKind }: { session: Session; db: string; collection: string; readOnlyKind: boolean }) {
   const toast = useApp((s) => s.toast);
-  const ro = session.connection.readOnly || readOnlyKind;
+  const ro = session.connection.readOnly || readOnlyKind || isSystemSchema(session, db);
   const prod = session.connection.tag === "production";
   const key = `tabla.mongo.${session.connection.id}.${db}.${collection}`;
   const [filter, setFilter] = useState(() => local.get(`${key}.filter`, ""));

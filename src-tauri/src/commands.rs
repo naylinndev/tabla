@@ -45,6 +45,8 @@ pub struct SessionInfo {
     session_id: String,
     server_version: String,
     schemas: Vec<String>,
+    /// Built-in databases (mysql, pg_catalog, admin…), listed apart and read-only.
+    system_schemas: Vec<String>,
     current_schema: Option<String>,
 }
 
@@ -129,20 +131,21 @@ impl AppState {
             let current = config.database.trim().parse::<u32>().unwrap_or(0).to_string();
             let schemas = ov.databases.iter().map(|d| d.index.to_string()).collect();
             self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Redis(Arc::new(s)));
-            return Ok(SessionInfo { session_id, server_version: ov.version, schemas, current_schema: Some(current) });
+            return Ok(SessionInfo { session_id, server_version: ov.version, schemas, system_schemas: vec![], current_schema: Some(current) });
         }
         if config.driver == Driver::Mongodb {
             let s = MongoSession::open(&config, password).await?;
             let ov = s.overview().await?;
             self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Mongo(Arc::new(s)));
-            return Ok(SessionInfo { session_id, server_version: ov.version, schemas: ov.databases, current_schema: Some(ov.current) });
+            return Ok(SessionInfo { session_id, server_version: ov.version, schemas: ov.databases, system_schemas: ov.system, current_schema: Some(ov.current) });
         }
         let session = Session::connect(&config, password).await?;
         let server_version = session.server_version().await?;
         let schemas = session.list_schemas().await?;
+        let system_schemas = session.system_schemas().await;
         let current_schema = session.current_schema().await?;
         self.sessions.lock().unwrap().insert(session_id.clone(), AnySession::Sql(Arc::new(session)));
-        Ok(SessionInfo { session_id, server_version, schemas, current_schema })
+        Ok(SessionInfo { session_id, server_version, schemas, system_schemas, current_schema })
     }
 
     pub async fn close(&self, session_id: &str) {

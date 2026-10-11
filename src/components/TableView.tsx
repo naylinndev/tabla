@@ -32,7 +32,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { api, errorMessage, type RowEdit, type TablePage, type TableStructure } from "../lib/api";
-import { useApp, local, type Session, type TableTab } from "../lib/store";
+import { isSystemSchema, useApp, local, type Session, type TableTab } from "../lib/store";
 import { buildFilter, FILTER_OPS, opTakesValue, toCSV, toJSON, type Filter, type FilterOp } from "../lib/sql";
 import { DataGrid, type Cursor, type GridColumn } from "./DataGrid";
 import { StructureEditor } from "./StructureEditor";
@@ -110,10 +110,14 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
     return m;
   }, [rel, tab.schema]);
   const pkCols = useMemo(() => structure?.columns.filter((c) => c.primaryKey).map((c) => c.name) ?? [], [structure]);
-  const editable = !conn.readOnly && !isView && pkCols.length > 0;
+  const system = isSystemSchema(session, tab.schema);
+  const canWrite = !conn.readOnly && !system;
+  const editable = canWrite && !isView && pkCols.length > 0;
   const editBlockReason = conn.readOnly
     ? "Read-only connection"
-    : isView
+    : system
+      ? "Built-in tables are read-only here"
+      : isView
       ? "Views can't be edited"
       : structure && !pkCols.length
         ? "Table has no primary key"
@@ -655,16 +659,16 @@ export function TableView({ session, tab, active }: { session: Session; tab: Tab
       {tab.view === "info" ? (
         <TableInfoView session={session} schema={tab.schema} table={tab.table} />
       ) : tab.view === "relations" ? (
-        <RelationsView session={session} schema={tab.schema} table={tab.table} editable={!conn.readOnly && !isView} />
+        <RelationsView session={session} schema={tab.schema} table={tab.table} editable={canWrite && !isView} />
       ) : tab.view === "triggers" ? (
-        <TriggersView session={session} schema={tab.schema} table={tab.table} editable={!conn.readOnly && !isView} />
+        <TriggersView session={session} schema={tab.schema} table={tab.table} editable={canWrite && !isView} />
       ) : tab.view === "structure" ? (
         <StructureEditor
           session={session}
           schema={tab.schema}
           table={tab.table}
           structure={structure}
-          editable={!conn.readOnly && !isView}
+          editable={canWrite && !isView}
           viewOrder={columnOrder}
           onViewOrder={saveOrder}
           onApplied={() => {

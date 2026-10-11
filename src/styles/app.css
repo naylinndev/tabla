@@ -2862,6 +2862,19 @@ html:not(.mac) .titlebar-space {
   cursor: default;
   white-space: nowrap;
 }
+/* Group heading, with a divider above every group but the first. */
+.listbox-group {
+  padding: 8px 12px 3px 30px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.listbox-item + .listbox-group {
+  margin-top: 5px;
+  border-top: 1px solid var(--border);
+}
 .listbox-item.active {
   background: var(--accent);
   color: #fff;
@@ -4398,4 +4411,24 @@ pre.grants {
   overflow: hidden;
   background: var(--bg-input);
   font-size: 12.5px;
+}
+
+/* Database/schema picker in the sidebar, with "New database" next to it. */
+.schema-pick {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.schema-pick .select-btn {
+  flex: 1;
+  min-width: 0;
+}
+.schema-note {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: -2px 2px 8px;
+  font-size: 11.5px;
+  color: var(--text-3);
 }

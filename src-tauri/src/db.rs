@@ -693,6 +693,22 @@ impl Session {
         Ok(self.text_rows(sql).await?.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect())
     }
 
+    /// Built-in databases/schemas that `list_schemas` leaves out, for engines
+    /// where browsing them is useful. Shown apart in the UI and never edited.
+    pub async fn system_schemas(&self) -> Vec<String> {
+        let sql = match self.driver {
+            Driver::Postgres => "SELECT nspname FROM pg_namespace WHERE nspname IN ('pg_catalog','information_schema') ORDER BY nspname",
+            Driver::Mysql => {
+                "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME IN \
+                 ('information_schema','mysql','performance_schema','sys') ORDER BY SCHEMA_NAME"
+            }
+            Driver::Clickhouse => "SELECT name FROM system.databases WHERE name IN ('system', 'INFORMATION_SCHEMA', 'information_schema') ORDER BY name",
+            _ => return vec![],
+        };
+        // Users without access to the catalog just don't see them.
+        self.text_rows(sql).await.map(|rows| rows.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect()).unwrap_or_default()
+    }
+
     pub async fn current_schema(&self) -> AppResult<Option<String>> {
         let sql = match self.driver {
             Driver::Postgres | Driver::Duckdb => "SELECT current_schema()",

@@ -3,7 +3,7 @@ import { Copy, CopyPlus, Download, Eraser, ExternalLink, FileCode2, Info, PenLin
 import { api, errorMessage, isLocal, type Driver, type TableInfo } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
 import { toCSV } from "../lib/sql";
-import { useApp, type Session } from "../lib/store";
+import { isSystemSchema, useApp, type Session } from "../lib/store";
 import { ContextMenu, Modal, type MenuItem } from "./ui";
 import { Checkbox } from "./controls";
 
@@ -45,7 +45,7 @@ export function useTableMenu(session: Session) {
   const toast = useApp((s) => s.toast);
   const st = useApp.getState;
   const d = session.connection.driver;
-  const ro = session.connection.readOnly;
+  const ro = session.connection.readOnly || isSystemSchema(session, session.schema);
 
   const items = (t: TableInfo): (MenuItem | "sep")[] => [
     { label: "Copy table name", icon: <Copy />, onClick: () => navigator.clipboard.writeText(t.name) },

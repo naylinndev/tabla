@@ -26,7 +26,7 @@ import {
   Users as UsersIcon,
   X,
 } from "lucide-react";
-import { local, newConnection, useApp, type SavedQuery, type Session, type Tab } from "../lib/store";
+import { isSystemSchema, local, newConnection, useApp, type SavedQuery, type Session, type Tab } from "../lib/store";
 import { isLocal } from "../lib/api";
 import { DriverIcon } from "./icons";
 import { schemaPrompt, engineName } from "../lib/ai";
@@ -34,6 +34,7 @@ import { ContextMenu, Kbd, Modal, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
 import { CreateTableDialog } from "./CreateTable";
+import { NewDatabase, canCreateSchema, schemaNoun } from "./NewDatabase";
 import { AppearanceMenu } from "./Dialogs";
 import { UsersView } from "./UsersView";
 import { ErdView } from "./ErdView";
@@ -152,6 +153,10 @@ function Sidebar({ session }: { session: Session }) {
   const toast = useApp((s) => s.toast);
   const [copying, setCopying] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [creatingSchema, setCreatingSchema] = useState(false);
+  const system = isSystemSchema(session, session.schema);
+  const canWrite = !c.readOnly && !system;
+  const showCreateSchema = !c.readOnly && canCreateSchema(c.driver);
   const savedQueries = useApp((s) => s.saved[c.id]) ?? [];
   const [savedMenu, setSavedMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [renamingSaved, setRenamingSaved] = useState<SavedQuery | null>(null);
@@ -276,6 +281,7 @@ function Sidebar({ session }: { session: Session }) {
         </Modal>
       )}
       {creating && <CreateTableDialog session={session} onClose={() => setCreating(false)} />}
+      {creatingSchema && <NewDatabase session={session} onClose={() => setCreatingSchema(false)} />}
       <div
         className={`sb-resize ${resize.active ? "on" : ""}`}
         onMouseDown={(e) => {
@@ -305,16 +311,30 @@ function Sidebar({ session }: { session: Session }) {
             <Power />
           </button>
         </div>
-        {session.schemas.length > 1 && (
-          <div style={{ marginBottom: 8 }}>
+        {(session.schemas.length + session.systemSchemas.length > 1 || showCreateSchema) && (
+          <div className="schema-pick">
             <Select
               size="sm"
               className="w-full"
               value={session.schema}
-              title={c.driver === "mysql" || c.driver === "clickhouse" ? "Database" : "Schema"}
-              options={session.schemas.map((s) => ({ value: s, label: s }))}
+              title={schemaNoun(c.driver) === "database" ? "Database" : "Schema"}
+              options={[
+                // Your own first; built-in ones apart, so nobody mistakes them for theirs.
+                ...session.schemas.map((s) => ({ value: s, label: s })),
+                ...session.systemSchemas.map((s) => ({ value: s, label: s, group: "System" })),
+              ]}
               onChange={(v) => setSchema(session.id, v)}
             />
+            {showCreateSchema && (
+              <button className="icon-btn" title={`New ${schemaNoun(c.driver)}`} onClick={() => setCreatingSchema(true)}>
+                <Plus size={14} />
+              </button>
+            )}
+          </div>
+        )}
+        {system && (
+          <div className="schema-note">
+            <Lock size={11} /> Built-in {schemaNoun(c.driver)}: read-only here
           </div>
         )}
         <div className="sb-search">
@@ -340,7 +360,7 @@ function Sidebar({ session }: { session: Session }) {
         <div className="sb-section">
           Tables <span className="count">{tables.length}</span>
           <div className="spacer" />
-          {!c.readOnly && (
+          {canWrite && (
             <button className="icon-btn" style={{ width: 20, height: 20 }} title="Create table" onClick={() => setCreating(true)}>
               <Plus size={12} />
             </button>
@@ -548,7 +568,7 @@ function EmptyWorkspace({ session }: { session: Session }) {
         <DriverIcon driver={session.connection.driver} provider={session.connection.provider} size={44} />
         <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text)" }}>Connected to {session.connection.name}</div>
         <div className="dim">
-          {session.tables.length} tables in <span className="mono">{session.schema}</span>. Pick one from the sidebar or
+          {session.tables.length} {session.tables.length === 1 ? "table" : "tables"} in <span className="mono">{session.schema}</span>. Pick one from the sidebar or
           start a query.
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
