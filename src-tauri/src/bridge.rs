@@ -187,6 +187,8 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
             None => Value::Null,
         },
         "mcp_command" => json!(commands::mcp_info()?),
+        "check_update" => json!(tokio::task::spawn_blocking(crate::updates::check).await.map_err(|e| AppError::msg(e.to_string()))??),
+        "open_project_page" => Value::Null,
         other => return Err(AppError::msg(format!("bridge: unknown command {other}"))),
     })
 }

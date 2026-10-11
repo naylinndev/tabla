@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
-import { Check, Monitor, Moon, Power, Sun, SunMoon, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, Check, Copy, Monitor, Moon, Power, RefreshCw, Sun, SunMoon, TriangleAlert } from "lucide-react";
+import { api, errorMessage } from "../lib/api";
+import { Checkbox } from "./controls";
 import { useApp, type FontChoice, type Theme } from "../lib/store";
 import { Modal } from "./ui";
 
@@ -102,6 +104,9 @@ export function AppearanceMenu({ onClose }: { onClose(): void }) {
   const font = useApp((s) => s.font);
   const setTheme = useApp((s) => s.setTheme);
   const setFont = useApp((s) => s.setFont);
+  const autoCheck = useApp((s) => s.autoUpdateCheck);
+  const setAutoCheck = useApp((s) => s.setAutoUpdateCheck);
+  const checkNow = useApp((s) => s.checkForUpdates);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
@@ -138,6 +143,44 @@ export function AppearanceMenu({ onClose }: { onClose(): void }) {
           <span className="ap-sample">Aa 123</span>
         </button>
       ))}
+      <div className="ap-title" style={{ marginTop: 12 }}>
+        Updates
+      </div>
+      <div className="ap-updates">
+        <Checkbox checked={autoCheck} onChange={setAutoCheck} label="Check for updates daily" />
+        <button className="btn ghost" onClick={() => checkNow(true)}>
+          <RefreshCw /> Check now
+        </button>
+      </div>
+      <small className="dim ap-note">Asks GitHub for the latest release. Nothing about you or your databases is sent.</small>
+    </div>
+  );
+}
+
+export function UpdateBanner() {
+  const update = useApp((s) => s.update);
+  const toast = useApp((s) => s.toast);
+  if (!update?.available) return null;
+  const open = (url: string) => api.openProjectPage(url).catch((e) => toast(errorMessage(e), "error"));
+  return (
+    <div className="update-banner">
+      <ArrowUpCircle />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <b>Tabla {update.latest} is available</b>
+        <span className="dim"> · you have {update.current}</span>
+        <div className="update-brew">
+          Homebrew: <code>brew upgrade --cask tabla</code>
+          <button className="icon-btn" style={{ width: 22, height: 22 }} title="Copy command" onClick={() => navigator.clipboard.writeText("brew upgrade --cask tabla").then(() => toast("Copied", "success"))}>
+            <Copy size={12} />
+          </button>
+        </div>
+      </div>
+      <button className="btn ghost" onClick={() => open(update.url)}>
+        Release notes
+      </button>
+      <button className="btn primary" onClick={() => open(update.url)}>
+        Download
+      </button>
     </div>
   );
 }

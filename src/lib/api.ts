@@ -156,6 +156,15 @@ export type RedisEdit =
   | { op: "expire"; key: string; seconds: number | null }
   | { op: "rename"; key: string; to: string };
 
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  available: boolean;
+  url: string;
+  notes: string;
+  published: string;
+}
+
 export interface UserInfo {
   name: string;
   host: string;
@@ -275,6 +284,8 @@ export const api = {
   exportFile: (defaultName: string, contents: string) =>
     invoke<string | null>("export_file", { defaultName, contents }),
   scanEnvFiles: () => invoke<EnvUrl[] | null>("scan_env_files"),
+  checkUpdate: () => invoke<UpdateInfo>("check_update"),
+  openProjectPage: (url: string) => invoke<void>("open_project_page", { url }),
   mcpCommand: () => invoke<{ binary: string; installed: boolean }>("mcp_command"),
 };
 

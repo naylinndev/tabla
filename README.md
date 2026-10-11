@@ -122,7 +122,9 @@ Tabla connects straight to your database and touches nothing else.
   content, and minimal Tauri permissions. All database, file and dialog access
   goes through a small set of Rust commands. File export always goes through
   a native "Save as" dialog.
-- **No telemetry, no analytics, no accounts.**
+- **No telemetry, no analytics, no accounts.** The only network request Tabla
+  makes on its own is a daily update check against GitHub Releases (a plain
+  GET, no identifiers), which you can turn off under **Appearance → Updates**.
 
 Found a vulnerability? Please open a private
 [security advisory](https://github.com/naylinndev/tabla/security/advisories/new)
@@ -239,11 +241,12 @@ src-tauri/            Rust backend
 ## Roadmap
 
 - [ ] SQL Server, MongoDB, ClickHouse, DuckDB, Oracle
-- [ ] Create tables and indexes visually
-- [ ] Query cancellation and streaming large results
-- [ ] Saved queries and snippets
-- [ ] ER diagram
-- [ ] Auto-update and signed builds
+- [x] Create tables and indexes visually
+- [x] Saved queries and snippets
+- [x] Query cancellation and adjustable result size
+- [x] ER diagram
+- [x] Update notifications (daily check against GitHub Releases)
+- [ ] One-click in-place updates (needs the updater signing key; see packaging/homebrew/README.md)
 
 ## Contributing
 

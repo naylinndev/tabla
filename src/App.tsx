@@ -80,6 +80,9 @@ export default function App() {
   useGlobalShortcuts();
   useEffect(() => {
     loadConnections();
+    // At most once a day, and only if enabled (Appearance menu).
+    const t = setTimeout(() => useApp.getState().checkForUpdates(), 4000);
+    return () => clearTimeout(t);
   }, [loadConnections]);
 
   return (

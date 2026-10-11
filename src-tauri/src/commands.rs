@@ -530,3 +530,20 @@ pub async fn scan_env_files(app: AppHandle) -> AppResult<Option<Vec<EnvUrl>>> {
 pub fn mcp_command() -> AppResult<McpCommand> {
     mcp_info()
 }
+
+#[tauri::command]
+pub async fn check_update() -> AppResult<crate::updates::UpdateInfo> {
+    tauri::async_runtime::spawn_blocking(crate::updates::check)
+        .await
+        .map_err(|e| AppError::msg(e.to_string()))?
+}
+
+/// Opens a page of the Tabla project (releases, issues…) in the default browser.
+#[tauri::command]
+pub fn open_project_page(app: AppHandle, url: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    if !crate::updates::is_allowed_url(&url) {
+        return Err(AppError::msg("Only Tabla's GitHub pages can be opened from here"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| AppError::msg(e.to_string()))
+}

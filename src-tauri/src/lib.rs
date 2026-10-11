@@ -17,6 +17,7 @@ mod error;
 mod mcp;
 mod redis_db;
 mod ssh;
+mod updates;
 mod users;
 
 pub fn run_mcp() {
@@ -33,6 +34,8 @@ pub fn run_bridge() {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Used from Rust only (open_project_page validates the URL); no web permission is granted.
+        .plugin(tauri_plugin_opener::init())
         .manage(commands::AppState::default())
         .invoke_handler(tauri::generate_handler![
             commands::list_connections,
@@ -69,6 +72,8 @@ pub fn run() {
             commands::export_file,
             commands::scan_env_files,
             commands::mcp_command,
+            commands::check_update,
+            commands::open_project_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Tabla");

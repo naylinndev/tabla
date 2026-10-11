@@ -55,6 +55,10 @@ interface State {
   /** Uncommitted edits per tab ("sessionId:tabId" -> count), for close/disconnect warnings. */
   pending: Record<string, number>;
   /** A confirmation the user must answer (disconnect, close a tab with edits). */
+  update: import("./api").UpdateInfo | null;
+  autoUpdateCheck: boolean;
+  checkForUpdates(manual?: boolean): Promise<void>;
+  setAutoUpdateCheck(v: boolean): void;
   confirm: { kind: "disconnect"; sessionId: string } | { kind: "closeTab"; sessionId: string; tabId: string } | null;
   paletteOpen: boolean;
   aiOpen: boolean;
@@ -153,6 +157,29 @@ export const useApp = create<State>((set, get) => {
     font: local.get<FontChoice>("tabla.font", "geist"),
     pending: {},
     confirm: null,
+    update: null,
+    autoUpdateCheck: local.get("tabla.updates.auto", true),
+
+    async checkForUpdates(manual = false) {
+      if (!manual) {
+        if (!get().autoUpdateCheck) return;
+        const last = local.get<number>("tabla.updates.last", 0);
+        if (Date.now() - last < 24 * 3600 * 1000) return;
+      }
+      local.set("tabla.updates.last", Date.now());
+      try {
+        const info = await api.checkUpdate();
+        set({ update: info });
+        if (manual) get().toast(info.available ? `Tabla ${info.latest} is available` : `You're up to date (Tabla ${info.current})`, info.available ? "info" : "success");
+      } catch (e) {
+        if (manual) get().toast(errorMessage(e), "info");
+      }
+    },
+
+    setAutoUpdateCheck(v) {
+      local.set("tabla.updates.auto", v);
+      set({ autoUpdateCheck: v });
+    },
     paletteOpen: false,
     aiOpen: false,
     editing: null,
