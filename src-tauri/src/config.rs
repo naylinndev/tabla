@@ -26,6 +26,7 @@ pub enum Driver {
     Clickhouse,
     Duckdb,
     Oracle,
+    Mongodb,
 }
 
 impl Driver {
@@ -39,6 +40,7 @@ impl Driver {
             Driver::Clickhouse => 8123,
             Driver::Duckdb => 0,
             Driver::Oracle => 1521,
+            Driver::Mongodb => 27017,
         }
     }
 

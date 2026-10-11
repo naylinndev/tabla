@@ -43,6 +43,8 @@ reqwest = { version = "0.13", default-features = false, features = ["query", "ru
 oracle = "0.6.3"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 duckdb = { version = "1.10506.0", features = ["bundled", "json", "parquet"] }
+mongodb = "3"
+json5 = "0.4"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

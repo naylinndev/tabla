@@ -1,11 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clickhouse" | "duckdb" | "oracle";
+export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clickhouse" | "duckdb" | "oracle" | "mongodb";
 
 /** Engines that open a local file in-process: no host, port, SSH or SSL. */
 export const isLocal = (d: Driver) => d === "sqlite" || d === "duckdb";
 /** Drivers that speak SQL (tables, queries, structure). */
-export type SqlDriver = Exclude<Driver, "redis">;
+export type SqlDriver = Exclude<Driver, "redis" | "mongodb">;
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 export type EnvTag = "" | "local" | "development" | "staging" | "production";
 
@@ -115,6 +115,38 @@ export interface TableRelations {
   outgoing: ForeignKey[];
   incoming: ForeignKey[];
   triggers: TriggerInfo[];
+}
+
+export interface MongoOverview {
+  version: string;
+  databases: string[];
+  current: string;
+}
+export interface MongoCollection {
+  name: string;
+  kind: "collection" | "view" | "timeseries";
+}
+export interface MongoFindArgs {
+  db: string;
+  collection: string;
+  filter: string;
+  sort: string;
+  projection: string;
+  skip: number;
+  limit: number;
+}
+export interface MongoPage {
+  columns: string[];
+  rows: (string | null)[][];
+  docs: string[];
+  ids: string[];
+  total: number | null;
+}
+export interface MongoIndex {
+  name: string;
+  keys: string;
+  unique: boolean;
+  options: string;
 }
 
 export interface RedisKey {
@@ -272,6 +304,17 @@ export const api = {
   listTables: (sessionId: string, schema: string) => invoke<TableInfo[]>("list_tables", { sessionId, schema }),
   tableStructure: (sessionId: string, schema: string, table: string) =>
     invoke<TableStructure>("table_structure", { sessionId, schema, table }),
+  mongoOverview: (sessionId: string) => invoke<MongoOverview>("mongo_overview", { sessionId }),
+  mongoCollections: (sessionId: string, db: string) => invoke<MongoCollection[]>("mongo_collections", { sessionId, db }),
+  mongoFind: (sessionId: string, args: MongoFindArgs) => invoke<MongoPage>("mongo_find", { sessionId, args }),
+  mongoInsert: (sessionId: string, db: string, collection: string, json: string) => invoke<string>("mongo_insert", { sessionId, db, collection, json }),
+  mongoReplace: (sessionId: string, db: string, collection: string, id: string, json: string) =>
+    invoke<void>("mongo_replace", { sessionId, db, collection, id, json }),
+  mongoSetField: (sessionId: string, db: string, collection: string, id: string, field: string, value: string | null) =>
+    invoke<void>("mongo_set_field", { sessionId, db, collection, id, field, value }),
+  mongoDelete: (sessionId: string, db: string, collection: string, ids: string[]) => invoke<number>("mongo_delete", { sessionId, db, collection, ids }),
+  mongoIndexes: (sessionId: string, db: string, collection: string) => invoke<MongoIndex[]>("mongo_indexes", { sessionId, db, collection }),
+  mongoShell: (sessionId: string, db: string, line: string, allowWrite: boolean) => invoke<string>("mongo_shell", { sessionId, db, line, allowWrite }),
   redisOverview: (sessionId: string) => invoke<RedisOverview>("redis_overview", { sessionId }),
   redisSelect: (sessionId: string, db: number) => invoke<void>("redis_select", { sessionId, db }),
   redisScan: (sessionId: string, pattern: string, cursor: number) => invoke<RedisScanPage>("redis_scan", { sessionId, pattern, cursor }),

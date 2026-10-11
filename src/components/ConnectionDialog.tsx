@@ -17,7 +17,7 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "production", label: "Production" },
 ];
 type DialogTab = "connection" | "ssh" | "ssl" | "options";
-const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123, duckdb: 0, oracle: 1521 };
+const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123, duckdb: 0, oracle: 1521, mongodb: 27017 };
 
 /** clickhouse://, ch:// and ClickHouse Cloud https:// URLs. Native ports map to the HTTP ones. */
 function parseClickhouse(u: URL, scheme: string): Partial<ConnectionConfig> {
@@ -99,6 +99,20 @@ export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
   try {
     const u = new URL(raw.trim());
     const scheme = u.protocol.replace(":", "");
+    if (scheme === "mongodb" || scheme === "mongodb+srv") {
+      const srv = scheme === "mongodb+srv";
+      const tls = u.searchParams.get("tls") ?? u.searchParams.get("ssl");
+      return {
+        driver: "mongodb",
+        host: decodeURIComponent(u.hostname) || "localhost",
+        // Port 0 = look the servers up from the SRV record.
+        port: srv ? 0 : u.port ? +u.port : 27017,
+        user: decodeURIComponent(u.username),
+        password: u.password ? decodeURIComponent(u.password) : undefined,
+        database: decodeURIComponent(u.pathname.replace(/^\//, "")) || "test",
+        sslMode: srv || tls === "true" ? "verify-full" : "disable",
+      };
+    }
     if (/^(clickhouses?|ch)$/.test(scheme) || (/^https?$/.test(scheme) && (/clickhouse/i.test(u.hostname) || ["8123", "8443"].includes(u.port))))
       return parseClickhouse(u, scheme);
     const driver: Driver | null = /^postgres(ql)?$/.test(scheme)
@@ -551,6 +565,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                   className="input mono"
                   inputMode="numeric"
                   value={f.port || ""}
+                  placeholder={f.driver === "mongodb" ? "SRV" : undefined}
                   onChange={(e) => set("port", +e.target.value.replace(/\D/g, "") || 0)}
                 />
               </div>

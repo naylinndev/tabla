@@ -465,10 +465,6 @@ impl OracleType {
                 DPI_ORACLE_TYPE_NATIVE_UINT,
                 NativeType::UInt64,
             )),
-            _ => Err(Error::internal_error(format!(
-                "unsupported Oracle type {}",
-                self
-            ))),
         }
     }
 }

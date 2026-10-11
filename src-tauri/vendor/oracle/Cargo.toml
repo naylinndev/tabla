@@ -64,3 +64,7 @@ struct_error = []
 
 [target."cfg(windows)".dependencies.rustversion]
 version = "1.0"
+
+# Vendored code: keep the build output quiet on newer compilers.
+[lints.rust]
+mismatched_lifetime_syntaxes = "allow"

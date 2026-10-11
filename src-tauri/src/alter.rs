@@ -311,7 +311,7 @@ impl Session {
                                 out.push(format!("ALTER TABLE {from} MODIFY ({col} {})", if c.nullable { "NULL" } else { "NOT NULL" }));
                             }
                         }
-                        Driver::Redis => return Err(crate::error::not_sql()),
+                        Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
                         Driver::Sqlite => {
                             if o.data_type.trim() != c.data_type.trim() || o.nullable != c.nullable || default_of(o) != default_of(c) {
                                 return Err(AppError::msg(format!(

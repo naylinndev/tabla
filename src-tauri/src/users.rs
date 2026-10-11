@@ -93,7 +93,7 @@ impl Session {
                     Err(_) => self.run_script(all, 10_000).await?,
                 }
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
             Driver::Duckdb => return Err(AppError::msg("DuckDB has no user accounts")),
         };
@@ -178,7 +178,7 @@ impl Session {
                 };
                 return Ok(rows.into_iter().next().map(|r| r.rows).unwrap_or_default().into_iter().filter_map(|r| r.into_iter().next().flatten()).collect());
             }
-            Driver::Redis => return Err(crate::error::not_sql()),
+            Driver::Redis | Driver::Mongodb => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
             Driver::Duckdb => return Err(AppError::msg("DuckDB has no user accounts")),
         };
