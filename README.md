@@ -45,6 +45,8 @@ Redis and the clouds they run on.
 - **Console.** A live log of every statement Tabla sends to the server, with timing and errors (passwords masked, never written to disk).
 - **Table actions.** Rename, duplicate, truncate and delete tables, always with the SQL shown first and type-to-confirm for destructive actions.
 - **Redis.** Key browser with types and TTLs, typed editors for strings (JSON aware), hashes, lists, sets, sorted sets and streams, and a CLI that asks before writes on production.
+- **MongoDB.** Databases and collections, a document grid with filters, sort and projection, a JSON editor that accepts mongosh syntax (ObjectId, ISODate…), indexes, and a mongosh-style shell that asks before writes.
+- **DuckDB.** Open a `.duckdb` file (or `:memory:`) and query Parquet, CSV and JSON files directly, with lists, structs and maps shown as readable values.
 - **Productive grid.** Duplicate rows (⌘D), hide or reorder columns, follow foreign keys, back/forward between tabs.
 - **Copy for AI.** Copy a schema as an AI-ready prompt, or copy a failing query together with its error and related tables.
 - **Environment tags and production guardrails.** Production connections get a red accent and ask for confirmation before committing changes.
@@ -92,7 +94,7 @@ Maintainers: release and tap setup is described in [packaging/homebrew](packagin
 | ClickHouse · ClickHouse Cloud | Supported | HTTP interface (8123, or 8443 with TLS); no transactions |
 | DuckDB | Supported | Local files or `:memory:`; query Parquet, CSV and JSON files directly |
 | Oracle 19c+ · Amazon RDS for Oracle | Supported | Uses Oracle Instant Client, which Tabla can install for you |
-| MongoDB | Planned | See [Roadmap](#roadmap) |
+| MongoDB · MongoDB Atlas | Supported | Collections, document grid and JSON editor, indexes, mongosh-style shell |
 
 Every connection can go through an **SSH tunnel**, for databases on a VPS or
 behind a bastion host, and can use **TLS client certificates**.
@@ -217,6 +219,7 @@ TABLA_TEST_SQLITE="/path/to/tabla_test.db" \
 TABLA_TEST_MSSQL="localhost:1433:sa:tabla_test" TABLA_TEST_MSSQL_PASSWORD="…" \
 TABLA_TEST_CLICKHOUSE="localhost:8123:default:tabla_test" TABLA_TEST_CLICKHOUSE_PASSWORD="…" \
 TABLA_TEST_ORACLE="localhost:1521:<user>:FREEPDB1" TABLA_TEST_ORACLE_PASSWORD="…" \
+TABLA_TEST_MONGO="localhost:27017:<user>:tabla_test" TABLA_TEST_MONGO_PASSWORD="…" \
 TABLA_TEST_SSH="127.0.0.1:2222:<user>:/dir/with/test/keys" \
 TABLA_CONFIG_DIR="$(mktemp -d)" \
 cargo test
@@ -262,8 +265,7 @@ src-tauri/            Rust backend
 
 ## Roadmap
 
-- [x] SQL Server, ClickHouse, DuckDB, Oracle
-- [ ] MongoDB
+- [x] SQL Server, ClickHouse, DuckDB, Oracle, MongoDB
 - [x] Create tables and indexes visually
 - [x] Saved queries and snippets
 - [x] Query cancellation and adjustable result size

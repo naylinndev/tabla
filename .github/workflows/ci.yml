@@ -79,6 +79,12 @@ jobs:
           CLICKHOUSE_PASSWORD: "tabla-ci-only"
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
         ports: ["8123:8123"]
+      mongo:
+        image: mongo:7
+        env:
+          MONGO_INITDB_ROOT_USERNAME: root
+          MONGO_INITDB_ROOT_PASSWORD: "tabla-ci-only"
+        ports: ["27017:27017"]
       oracle:
         image: gvenzl/oracle-free:23-slim-faststart
         env:
@@ -156,6 +162,8 @@ jobs:
           TABLA_TEST_REDIS: "127.0.0.1:6379:9"
           TABLA_TEST_CLICKHOUSE: "127.0.0.1:8123:default:tabla_test"
           TABLA_TEST_CLICKHOUSE_PASSWORD: "tabla-ci-only"
+          TABLA_TEST_MONGO: "127.0.0.1:27017:root:tabla_test"
+          TABLA_TEST_MONGO_PASSWORD: "tabla-ci-only"
           TABLA_TEST_ORACLE: "127.0.0.1:1521:tabla:FREEPDB1"
           TABLA_TEST_ORACLE_PASSWORD: "tabla_ci_only"
         run: |

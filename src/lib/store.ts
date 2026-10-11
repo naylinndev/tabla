@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, errorMessage, type ConnectionConfig, type TableInfo } from "./api";
+import { api, errorMessage, isSql, type ConnectionConfig, type TableInfo } from "./api";
 
 export type TableView = "data" | "structure" | "relations" | "triggers" | "info";
 export type TableTab = {
@@ -235,7 +235,7 @@ export const useApp = create<State>((set, get) => {
           activeTabId: tabs[0]?.id ?? null,
         };
         set((st) => ({ sessions: [...st.sessions, session], activeSessionId: session.id }));
-        if (c.driver !== "redis") await get().refreshTables(session.id);
+        if (isSql(c.driver)) await get().refreshTables(session.id);
         else patchSession(session.id, () => ({ tablesLoading: false }));
       } catch (e) {
         get().toast(`Couldn't connect to ${c.name}: ${errorMessage(e)}`, "error");

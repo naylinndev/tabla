@@ -1,6 +1,6 @@
 import { Command } from "cmdk";
 import { Waypoints, Users, Bot, ArrowDownUp, CornerDownLeft, Code2, Eye, Home, Moon, Plug, Plus, Power, Sun, Table2 } from "lucide-react";
-import { isLocal } from "../lib/api";
+import { isLocal, isSql } from "../lib/api";
 import { newConnection, useActiveSession, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { Modal } from "./ui";
@@ -41,7 +41,7 @@ export function CommandPalette() {
             </Command.Group>
           )}
           <Command.Group heading="Actions">
-            {session && (
+            {session && isSql(session.connection.driver) && (
               <>
                 <Command.Item value="new query sql editor" onSelect={() => run(() => st().newQuery(session.id))}>
                   <Code2 /> New query
@@ -57,10 +57,12 @@ export function CommandPalette() {
                 <Command.Item value="refresh tables reload" onSelect={() => run(() => st().refreshTables(session.id))}>
                   <ArrowDownUp /> Refresh table list
                 </Command.Item>
-                <Command.Item value="disconnect close connection" onSelect={() => run(() => st().requestDisconnect(session.id))}>
-                  <Power /> Disconnect {session.connection.name}
-                </Command.Item>
               </>
+            )}
+            {session && (
+              <Command.Item value="disconnect close connection" onSelect={() => run(() => st().requestDisconnect(session.id))}>
+                <Power /> Disconnect {session.connection.name}
+              </Command.Item>
             )}
             <Command.Item value="new connection add" onSelect={() => run(() => st().setEditing(newConnection()))}>
               <Plus /> New connection

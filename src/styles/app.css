@@ -4201,3 +4201,183 @@ pre.grants {
   text-overflow: ellipsis;
   font-size: 11px;
 }
+
+/* ── MongoDB workspace ───────────────────────────────────── */
+.view.mongo {
+  background: var(--bg);
+}
+.mongo-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.mongo-q {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 160px;
+  padding: 0 10px;
+  height: 32px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+.mongo-q:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.mongo-q .input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  height: 30px;
+}
+.mongo-q .input:focus {
+  box-shadow: none;
+}
+.sg-bar.mongo-tools {
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.mongo-grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.mongo-grid table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+  min-width: 100%;
+}
+.mongo-grid th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 30px;
+  padding: 0 10px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+.mongo-grid td {
+  height: var(--row-h);
+  padding: 0 10px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.mongo-grid tr:hover td {
+  background: var(--hover);
+}
+.mongo-grid tr.sel td {
+  background: var(--accent-soft);
+}
+.mongo-grid th.pick,
+.mongo-grid td.pick {
+  width: 32px;
+  padding: 0 0 0 10px;
+  border-right: none;
+}
+.mongo-grid td.null {
+  color: var(--text-3);
+}
+.mongo-grid td.nested {
+  color: var(--text-2);
+}
+.mongo-grid td.editing {
+  padding: 0;
+}
+.mongo-grid td.editing input {
+  width: 100%;
+  height: calc(var(--row-h) - 1px);
+  padding: 0 10px;
+  border: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.mongo-grid td.row-acts {
+  width: 36px;
+  padding: 0 6px;
+  border-right: none;
+}
+.mongo-grid td.row-acts .icon-btn {
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+}
+.mongo-grid tr:hover td.row-acts .icon-btn {
+  opacity: 1;
+}
+.mongo-docs {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.mongo-doc {
+  flex: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  overflow: hidden;
+}
+.mongo-doc.sel {
+  border-color: var(--accent);
+}
+.mongo-doc-acts {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mongo-doc-acts .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+.mongo-doc pre {
+  margin: 0;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sg-bar.mongo-pager {
+  padding: 6px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.sg.mongo-ix .sg-row {
+  grid-template-columns: minmax(140px, 1fr) minmax(160px, 1.4fr) 80px minmax(140px, 1.2fr) 40px;
+  min-width: 600px;
+  padding-left: 12px;
+}
+.mongo-editor {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--bg-input);
+  font-size: 12.5px;
+}

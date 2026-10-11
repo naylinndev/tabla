@@ -871,7 +871,8 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           <Switch on={f.readOnly} onChange={(v) => set("readOnly", v)} label="Read-only" />
         </div>
 
-        {f.driver !== "redis" && (
+        {/* AI assistants (MCP) read SQL databases only. */}
+        {f.driver !== "redis" && f.driver !== "mongodb" && (
         <div className="toggle-row">
           <Bot />
           <div style={{ flex: 1 }}>

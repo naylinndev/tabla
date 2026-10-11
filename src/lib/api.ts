@@ -6,6 +6,9 @@ export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clic
 export const isLocal = (d: Driver) => d === "sqlite" || d === "duckdb";
 /** Drivers that speak SQL (tables, queries, structure). */
 export type SqlDriver = Exclude<Driver, "redis" | "mongodb">;
+
+/** Engines with tables and SQL (Redis and MongoDB have their own workspaces). */
+export const isSql = (d: Driver): d is SqlDriver => d !== "redis" && d !== "mongodb";
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 export type EnvTag = "" | "local" | "development" | "staging" | "production";
 

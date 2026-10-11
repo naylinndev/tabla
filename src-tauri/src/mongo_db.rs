@@ -151,7 +151,7 @@ impl MongoSession {
     fn record(&self, line: &str, started: Instant, outcome: Result<String, String>) {
         let mut log = self.log.lock().unwrap();
         let id = log.back().map(|e| e.id + 1).unwrap_or(1);
-        let mut text = line.to_string();
+        let mut text = redact_pwd(line);
         if text.len() > 4000 {
             let cut = (0..=4000).rev().find(|i| text.is_char_boundary(*i)).unwrap_or(0);
             text.truncate(cut);
@@ -753,9 +753,44 @@ fn page(docs: Vec<Document>, total: Option<u64>) -> FindPage {
     FindPage { columns, rows, docs, ids, total }
 }
 
+/// Masks `pwd` values (createUser, updateUser…) so passwords never reach the Console log.
+fn redact_pwd(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(p) = rest.find("pwd") {
+        let (head, tail) = rest.split_at(p + 3);
+        out.push_str(head);
+        // pwd, "pwd" or 'pwd', then a colon and a quoted value.
+        let after_key = tail.strip_prefix(['"', '\'']).unwrap_or(tail);
+        let Some(value) = after_key.trim_start().strip_prefix(':').map(str::trim_start) else {
+            rest = tail;
+            continue;
+        };
+        let Some(q) = value.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+            rest = tail;
+            continue;
+        };
+        let end = value[1..].find(q).map(|i| i + 2).unwrap_or(value.len());
+        out.push_str(&tail[..tail.len() - value.len()]);
+        out.push(q);
+        out.push_str("•••");
+        out.push(q);
+        rest = &value[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod unit_tests {
     use super::*;
+
+    #[test]
+    fn masks_passwords() {
+        assert_eq!(redact_pwd("{createUser: 'bob', pwd: 's3cr:et', roles: []}"), "{createUser: 'bob', pwd: '•••', roles: []}");
+        assert_eq!(redact_pwd("{\"updateUser\": \"bob\", \"pwd\": \"x\"}"), "{\"updateUser\": \"bob\", \"pwd\": \"•••\"}");
+        assert_eq!(redact_pwd("db.pwds.find({})"), "db.pwds.find({})");
+    }
 
     #[test]
     fn reads_shell_syntax() {
