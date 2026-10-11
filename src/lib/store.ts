@@ -19,7 +19,8 @@ export interface SavedQuery {
   updatedAt: number;
 }
 export type UsersTab = { id: string; kind: "users"; title: string };
-export type Tab = TableTab | QueryTab | UsersTab;
+export type ErdTab = { id: string; kind: "erd"; title: string; schema: string };
+export type Tab = TableTab | QueryTab | UsersTab | ErdTab;
 
 export interface Session {
   id: string;
@@ -76,6 +77,7 @@ interface State {
   saveQuery(connId: string, q: { id?: string; name: string; sql: string }): SavedQuery;
   deleteSaved(connId: string, id: string): void;
   openUsers(sessionId: string): void;
+  openErd(sessionId: string): void;
   updateTab(sessionId: string, tabId: string, patch: Partial<Tab>): void;
   /** Asks first if the tab has uncommitted edits, unless `force`. */
   closeTab(sessionId: string, tabId: string, force?: boolean): void;
@@ -295,6 +297,15 @@ export const useApp = create<State>((set, get) => {
       const found = s.tabs.find((t) => t.kind === "users");
       if (found) return patchSession(sessionId, () => ({ activeTabId: found.id }));
       const tab: UsersTab = { id: uid(), kind: "users", title: "Users" };
+      patchSession(sessionId, (s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
+    },
+
+    openErd(sessionId) {
+      const s = get().sessions.find((x) => x.id === sessionId);
+      if (!s) return;
+      const found = s.tabs.find((t) => t.kind === "erd" && t.schema === s.schema);
+      if (found) return patchSession(sessionId, () => ({ activeTabId: found.id }));
+      const tab: ErdTab = { id: uid(), kind: "erd", title: `${s.schema} diagram`, schema: s.schema };
       patchSession(sessionId, (s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
     },
 

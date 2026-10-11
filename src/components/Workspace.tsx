@@ -19,6 +19,7 @@ import {
   SunMoon,
   Table2,
   TerminalSquare,
+  Waypoints,
   Pencil,
   Copy,
   Trash2,
@@ -34,6 +35,7 @@ import { Console } from "./Console";
 import { CreateTableDialog } from "./CreateTable";
 import { AppearanceMenu } from "./Dialogs";
 import { UsersView } from "./UsersView";
+import { ErdView } from "./ErdView";
 import { Select } from "./controls";
 import { TableView } from "./TableView";
 import { QueryView } from "./QueryView";
@@ -391,6 +393,9 @@ export function Sidebar({ session }: { session: Session }) {
         <button className="btn" onClick={() => newQuery(session.id)}>
           <Code2 /> New query <Kbd keys="Mod T" />
         </button>
+        <button className="icon-btn" style={{ width: 32, height: 32 }} title="ER diagram of this schema" onClick={() => useApp.getState().openErd(session.id)}>
+          <Waypoints />
+        </button>
         {c.driver !== "sqlite" && (
           <button className="icon-btn" style={{ width: 32, height: 32 }} title="Users & privileges" onClick={() => useApp.getState().openUsers(session.id)}>
             <UsersIcon />
@@ -492,7 +497,7 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
                 }}
                 title={t.kind === "table" ? `${t.schema}.${t.table}` : t.title}
               >
-                {t.kind === "table" ? <Table2 /> : t.kind === "users" ? <UsersIcon /> : <FileCode2 />}
+                {t.kind === "table" ? <Table2 /> : t.kind === "users" ? <UsersIcon /> : t.kind === "erd" ? <Waypoints /> : <FileCode2 />}
                 <span className="title">{tabTitle(t)}</span>
                 <button
                   className="close"
@@ -520,6 +525,8 @@ export function Workspace({ session, visible }: { session: Session; visible: boo
             <TableView key={t.id} session={session} tab={t} active={visible && t.id === session.activeTabId} />
           ) : t.kind === "users" ? (
             <UsersView key={t.id} session={session} active={visible && t.id === session.activeTabId} />
+          ) : t.kind === "erd" ? (
+            <ErdView key={t.id} session={session} schema={t.schema} active={visible && t.id === session.activeTabId} />
           ) : (
             <QueryView key={t.id} session={session} tab={t} active={visible && t.id === session.activeTabId} />
           ),

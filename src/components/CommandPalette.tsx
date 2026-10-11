@@ -1,5 +1,5 @@
 import { Command } from "cmdk";
-import { Users, Bot, ArrowDownUp, CornerDownLeft, Code2, Eye, Home, Moon, Plug, Plus, Power, Sun, Table2 } from "lucide-react";
+import { Waypoints, Users, Bot, ArrowDownUp, CornerDownLeft, Code2, Eye, Home, Moon, Plug, Plus, Power, Sun, Table2 } from "lucide-react";
 import { newConnection, useActiveSession, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { Modal } from "./ui";
@@ -50,6 +50,9 @@ export function CommandPalette() {
                     <Users /> Users & privileges
                   </Command.Item>
                 )}
+                <Command.Item value="er diagram erd relations schema graph" onSelect={() => run(() => st().openErd(session.id))}>
+                  <Waypoints /> ER diagram of {session.schema}
+                </Command.Item>
                 <Command.Item value="refresh tables reload" onSelect={() => run(() => st().refreshTables(session.id))}>
                   <ArrowDownUp /> Refresh table list
                 </Command.Item>

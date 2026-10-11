@@ -47,6 +47,7 @@ pub fn run() {
             commands::fetch_rows,
             commands::table_details,
             commands::table_relations,
+            commands::schema_graph,
             commands::list_users,
             commands::user_grants,
             commands::query_log,

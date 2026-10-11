@@ -18,7 +18,7 @@ use crate::{
     redis_db::{RedisEdit, RedisOverview, RedisSession, RedisValue, ScanPage},
     users::UserInfo,
     config::{self, ConnectionConfig},
-    db::{FetchArgs, LogEntry, TableRelations, ResultSet, RowEdit, Session, TableDetails, TableInfo, TablePage, TableStructure},
+    db::{FetchArgs, LogEntry, SchemaGraph, TableRelations, ResultSet, RowEdit, Session, TableDetails, TableInfo, TablePage, TableStructure},
     error::{AppError, AppResult},
 };
 
@@ -351,6 +351,11 @@ pub async fn list_users(state: State<'_, AppState>, session_id: String) -> AppRe
 #[tauri::command]
 pub async fn user_grants(state: State<'_, AppState>, session_id: String, name: String, host: String) -> AppResult<Vec<String>> {
     state.get(&session_id)?.user_grants(&name, &host).await
+}
+
+#[tauri::command]
+pub async fn schema_graph(state: State<'_, AppState>, session_id: String, schema: String) -> AppResult<SchemaGraph> {
+    state.get(&session_id)?.schema_graph(&schema).await
 }
 
 #[tauri::command]

@@ -146,6 +146,7 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         "redis_command" => json!(state.get_redis(&sid()?)?.command(&arg::<String>(&a, "line")?, arg(&a, "allowWrite")?).await?),
         "list_users" => json!(state.get(&sid()?)?.list_users().await?),
         "user_grants" => json!(state.get(&sid()?)?.user_grants(&arg::<String>(&a, "name")?, &arg::<String>(&a, "host")?).await?),
+        "schema_graph" => json!(state.get(&sid()?)?.schema_graph(&arg::<String>(&a, "schema")?).await?),
         "table_relations" => json!(
             state.get(&sid()?)?.table_relations(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
         ),

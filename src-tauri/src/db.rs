@@ -149,6 +149,30 @@ pub struct TableRelations {
     pub triggers: Vec<TriggerInfo>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphColumn {
+    pub name: String,
+    pub data_type: String,
+    pub primary_key: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphTable {
+    pub name: String,
+    pub kind: String,
+    pub columns: Vec<GraphColumn>,
+}
+
+/// Everything the ER diagram needs for one schema.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaGraph {
+    pub tables: Vec<GraphTable>,
+    pub foreign_keys: Vec<ForeignKey>,
+}
+
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TableDetails {
@@ -681,73 +705,95 @@ impl Session {
         Ok(TableStructure { columns, indexes })
     }
 
+    pub async fn schema_graph(&self, schema: &str) -> AppResult<SchemaGraph> {
+        let d = self.driver;
+        let s = d.quote_literal(schema);
+        let tables = self.list_tables(schema).await?;
+        let mut by_table: HashMap<String, Vec<GraphColumn>> = HashMap::new();
+        let col_sql = match d {
+            Driver::Postgres => Some(format!(
+                "SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod), \
+                 EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY(i.indkey)) \
+                 FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = {s} AND c.relkind IN ('r','p','v','m','f') AND a.attnum > 0 AND NOT a.attisdropped \
+                 ORDER BY c.relname, a.attnum"
+            )),
+            Driver::Mysql => Some(format!(
+                "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IF(COLUMN_KEY = 'PRI', '1', '0') FROM information_schema.COLUMNS \
+                 WHERE TABLE_SCHEMA = {s} ORDER BY TABLE_NAME, ORDINAL_POSITION"
+            )),
+            Driver::Sqlite => None,
+            Driver::Redis => return Err(crate::error::not_sql()),
+        };
+        match col_sql {
+            Some(sql) => {
+                for r in self.text_rows(&sql).await? {
+                    let mut it = r.into_iter();
+                    let mut n = || it.next().flatten();
+                    let (Some(t), Some(c)) = (n(), n()) else { continue };
+                    let ty = n().unwrap_or_default();
+                    let pk = matches!(n().as_deref(), Some("t" | "1"));
+                    by_table.entry(t).or_default().push(GraphColumn { name: c, data_type: ty, primary_key: pk });
+                }
+            }
+            None => {
+                for t in &tables {
+                    let st = self.table_structure(schema, &t.name).await?;
+                    by_table.insert(
+                        t.name.clone(),
+                        st.columns.into_iter().map(|c| GraphColumn { name: c.name, data_type: c.data_type, primary_key: c.primary_key }).collect(),
+                    );
+                }
+            }
+        }
+        let mut foreign_keys = Vec::new();
+        match d {
+            Driver::Sqlite => {
+                for t in tables.iter().filter(|t| t.kind == "table") {
+                    foreign_keys.extend(self.table_relations(schema, &t.name).await?.outgoing);
+                }
+            }
+            // One query for the whole schema instead of one per table.
+            _ => foreign_keys = self.schema_foreign_keys(schema).await?,
+        }
+        Ok(SchemaGraph {
+            tables: tables
+                .into_iter()
+                .map(|t| GraphTable { columns: by_table.remove(&t.name).unwrap_or_default(), name: t.name, kind: t.kind })
+                .collect(),
+            foreign_keys,
+        })
+    }
+
+    async fn schema_foreign_keys(&self, schema: &str) -> AppResult<Vec<ForeignKey>> {
+        let d = self.driver;
+        let s = d.quote_literal(schema);
+        let sql = match d {
+            Driver::Postgres => format!("{PG_FK_BASE} AND n.nspname = {s} ORDER BY 3, 1"),
+            Driver::Mysql => format!("{MY_FK_BASE} AND k.TABLE_SCHEMA = {s} {MY_FK_GROUP} ORDER BY 3, 1"),
+            _ => return Ok(vec![]),
+        };
+        Ok(parse_fks(self.text_rows(&sql).await?, d == Driver::Postgres))
+    }
+
     pub async fn table_relations(&self, schema: &str, table: &str) -> AppResult<TableRelations> {
         let d = self.driver;
         let (s, t) = (d.quote_literal(schema), d.quote_literal(table));
-        let split = |v: Option<String>| -> Vec<String> {
-            v.unwrap_or_default().split(", ").filter(|x| !x.is_empty()).map(str::to_string).collect()
-        };
-        let pg_action = |c: &str| match c {
-            "r" => "RESTRICT",
-            "c" => "CASCADE",
-            "n" => "SET NULL",
-            "d" => "SET DEFAULT",
-            _ => "NO ACTION",
-        };
-        let fk_rows = |rows: Vec<Vec<Option<String>>>, pg: bool| -> Vec<ForeignKey> {
-            rows.into_iter()
-                .filter_map(|r| {
-                    let mut it = r.into_iter();
-                    let mut n = || it.next().flatten();
-                    let (name, sch, tbl, cols, rs, rt, rc, up, del) = (n()?, n(), n(), n(), n(), n(), n(), n(), n());
-                    let act = |v: Option<String>| {
-                        let v = v.unwrap_or_default();
-                        if pg { pg_action(&v).to_string() } else if v.is_empty() { "NO ACTION".into() } else { v.to_uppercase() }
-                    };
-                    Some(ForeignKey {
-                        name,
-                        schema: sch.unwrap_or_default(),
-                        table: tbl.unwrap_or_default(),
-                        columns: split(cols),
-                        ref_schema: rs.unwrap_or_default(),
-                        ref_table: rt.unwrap_or_default(),
-                        ref_columns: split(rc),
-                        on_update: act(up),
-                        on_delete: act(del),
-                    })
-                })
-                .collect()
-        };
-
         let (outgoing, incoming) = match d {
             Driver::Postgres => {
-                let base = "SELECT con.conname, n.nspname, c.relname, \
-                     (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.conkey) WITH ORDINALITY k(attnum, n) \
-                       JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum), \
-                     nf.nspname, cf.relname, \
-                     (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.confkey) WITH ORDINALITY k(attnum, n) \
-                       JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum), \
-                     con.confupdtype::text, con.confdeltype::text \
-                     FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
-                     JOIN pg_class cf ON cf.oid = con.confrelid JOIN pg_namespace nf ON nf.oid = cf.relnamespace WHERE con.contype = 'f'";
                 (
-                    fk_rows(self.text_rows(&format!("{base} AND n.nspname = {s} AND c.relname = {t} ORDER BY 1")).await?, true),
-                    fk_rows(self.text_rows(&format!("{base} AND nf.nspname = {s} AND cf.relname = {t} ORDER BY 2, 3, 1")).await?, true),
+                    parse_fks(self.text_rows(&format!("{PG_FK_BASE} AND n.nspname = {s} AND c.relname = {t} ORDER BY 1")).await?, true),
+                    parse_fks(self.text_rows(&format!("{PG_FK_BASE} AND nf.nspname = {s} AND cf.relname = {t} ORDER BY 2, 3, 1")).await?, true),
                 )
             }
             Driver::Mysql => {
-                let base = "SELECT k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, \
-                     GROUP_CONCAT(k.COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR ', '), k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, \
-                     GROUP_CONCAT(k.REFERENCED_COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR ', '), r.UPDATE_RULE, r.DELETE_RULE \
-                     FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
-                     ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME \
-                     WHERE k.REFERENCED_TABLE_NAME IS NOT NULL";
-                let group = "GROUP BY k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, r.UPDATE_RULE, r.DELETE_RULE";
                 (
-                    fk_rows(self.text_rows(&format!("{base} AND k.TABLE_SCHEMA = {s} AND k.TABLE_NAME = {t} {group} ORDER BY 1")).await?, false),
-                    fk_rows(
-                        self.text_rows(&format!("{base} AND k.REFERENCED_TABLE_SCHEMA = {s} AND k.REFERENCED_TABLE_NAME = {t} {group} ORDER BY 3, 1"))
-                            .await?,
+                    parse_fks(self.text_rows(&format!("{MY_FK_BASE} AND k.TABLE_SCHEMA = {s} AND k.TABLE_NAME = {t} {MY_FK_GROUP} ORDER BY 1")).await?, false),
+                    parse_fks(
+                        self.text_rows(&format!(
+                            "{MY_FK_BASE} AND k.REFERENCED_TABLE_SCHEMA = {s} AND k.REFERENCED_TABLE_NAME = {t} {MY_FK_GROUP} ORDER BY 3, 1"
+                        ))
+                        .await?,
                         false,
                     ),
                 )
@@ -762,11 +808,11 @@ impl Session {
                         d.quote_literal(tbl)
                     )
                 };
-                let outgoing = fk_rows(self.text_rows(&one(table)).await?, false);
+                let outgoing = parse_fks(self.text_rows(&one(table)).await?, false);
                 // SQLite has no reverse index: scan the other tables' keys.
                 let mut incoming = Vec::new();
                 for other in self.list_tables(schema).await?.into_iter().filter(|x| x.kind == "table" && x.name != table) {
-                    for fk in fk_rows(self.text_rows(&one(&other.name)).await?, false) {
+                    for fk in parse_fks(self.text_rows(&one(&other.name)).await?, false) {
                         if fk.ref_table == table {
                             incoming.push(fk);
                         }
@@ -1188,6 +1234,66 @@ fn where_key(d: Driver, key: Vec<CellValue>, binds: &mut Vec<Option<String>>, ph
         .join(" AND ")
 }
 
+const PG_FK_BASE: &str = "SELECT con.conname, n.nspname, c.relname, \
+     (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.conkey) WITH ORDINALITY k(attnum, n) \
+       JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum), \
+     nf.nspname, cf.relname, \
+     (SELECT string_agg(a.attname, ', ' ORDER BY k.n) FROM unnest(con.confkey) WITH ORDINALITY k(attnum, n) \
+       JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum), \
+     con.confupdtype::text, con.confdeltype::text \
+     FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace \
+     JOIN pg_class cf ON cf.oid = con.confrelid JOIN pg_namespace nf ON nf.oid = cf.relnamespace WHERE con.contype = 'f'";
+
+const MY_FK_BASE: &str = "SELECT k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, \
+     GROUP_CONCAT(k.COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR ', '), k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, \
+     GROUP_CONCAT(k.REFERENCED_COLUMN_NAME ORDER BY k.ORDINAL_POSITION SEPARATOR ', '), r.UPDATE_RULE, r.DELETE_RULE \
+     FROM information_schema.KEY_COLUMN_USAGE k JOIN information_schema.REFERENTIAL_CONSTRAINTS r \
+     ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME AND r.TABLE_NAME = k.TABLE_NAME \
+     WHERE k.REFERENCED_TABLE_NAME IS NOT NULL";
+
+const MY_FK_GROUP: &str =
+    "GROUP BY k.CONSTRAINT_NAME, k.TABLE_SCHEMA, k.TABLE_NAME, k.REFERENCED_TABLE_SCHEMA, k.REFERENCED_TABLE_NAME, r.UPDATE_RULE, r.DELETE_RULE";
+
+/// Rows: name, schema, table, columns, ref schema, ref table, ref columns, on update, on delete.
+fn parse_fks(rows: Vec<Vec<Option<String>>>, pg: bool) -> Vec<ForeignKey> {
+    let split = |v: Option<String>| -> Vec<String> { v.unwrap_or_default().split(", ").filter(|x| !x.is_empty()).map(str::to_string).collect() };
+    let act = |v: Option<String>| {
+        let v = v.unwrap_or_default();
+        if pg {
+            match v.as_str() {
+                "r" => "RESTRICT",
+                "c" => "CASCADE",
+                "n" => "SET NULL",
+                "d" => "SET DEFAULT",
+                _ => "NO ACTION",
+            }
+            .to_string()
+        } else if v.is_empty() {
+            "NO ACTION".into()
+        } else {
+            v.to_uppercase()
+        }
+    };
+    rows.into_iter()
+        .filter_map(|r| {
+            let mut it = r.into_iter();
+            let mut n = || it.next().flatten();
+            let (name, sch, tbl, cols, rs, rt, rc, up, del) = (n()?, n(), n(), n(), n(), n(), n(), n(), n());
+            Some(ForeignKey {
+                name,
+                schema: sch.unwrap_or_default(),
+                table: tbl.unwrap_or_default(),
+                columns: split(cols),
+                ref_schema: rs.unwrap_or_default(),
+                ref_table: rt.unwrap_or_default(),
+                ref_columns: split(rc),
+                on_update: act(up),
+                on_delete: act(del),
+            })
+        })
+        .collect()
+}
+
 fn column_from(r: Vec<Option<String>>, nullable: impl Fn(&str) -> bool, pk: impl Fn(&str) -> bool) -> ColumnInfo {
     let mut it = r.into_iter();
     ColumnInfo {
@@ -1574,6 +1680,11 @@ mod relation_tests {
         let parent = s.table_relations(schema, "rel_parent").await.unwrap();
         assert_eq!(parent.incoming.len(), 1, "incoming");
         assert_eq!(parent.incoming[0].table, "rel_child");
+        let g = s.schema_graph(schema).await.unwrap();
+        let child = g.tables.iter().find(|t| t.name == "rel_child").expect("table in graph");
+        assert!(child.columns.iter().any(|c| c.name == "parent_id"));
+        assert!(child.columns.iter().any(|c| c.name == "id" && c.primary_key));
+        assert!(g.foreign_keys.iter().any(|f| f.table == "rel_child" && f.ref_table == "rel_parent"), "graph fks");
         s.run_script(teardown, 1).await.unwrap();
     }
 
