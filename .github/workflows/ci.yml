@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, claude/affectionate-thompson-oaoccp]
+    branches: [main]
   pull_request:
 
 permissions:
