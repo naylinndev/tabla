@@ -47,11 +47,18 @@ pub struct LogEntry {
 const LOG_CAP: usize = 500;
 const LOG_SQL_MAX: usize = 4000;
 
+enum Cancel {
+    Pg(String),
+    My(String),
+}
+
 pub struct Session {
     pub pool: Pool,
     pub driver: Driver,
     pub read_only: bool,
     log: std::sync::Mutex<std::collections::VecDeque<LogEntry>>,
+    /// Server-side handles for queries that can be cancelled, by query id.
+    running: std::sync::Mutex<HashMap<String, Cancel>>,
     /// Kept alive for the lifetime of the pool when connecting through SSH.
     _tunnel: Option<crate::ssh::Tunnel>,
 }
@@ -331,7 +338,7 @@ impl Session {
                 Pool::Lite(SqlitePoolOptions::new().max_connections(2).connect_with(o).await?)
             }
         };
-        Ok(Session { pool, driver: cfg.driver, read_only: cfg.read_only, log: Default::default(), _tunnel: tunnel })
+        Ok(Session { pool, driver: cfg.driver, read_only: cfg.read_only, log: Default::default(), running: Default::default(), _tunnel: tunnel })
     }
 
     pub async fn close(&self) {
@@ -410,6 +417,82 @@ impl Session {
             }
         }
         Ok(sets)
+    }
+
+    /// Runs a script on a dedicated connection whose server-side id is
+    /// registered under `query_id`, so `cancel` can stop it on the server.
+    pub async fn run_cancellable(&self, sql: &str, max_rows: usize, query_id: &str, progress: Progress<'_>) -> AppResult<Vec<ResultSet>> {
+        let started = std::time::Instant::now();
+        let raw = || sqlx::raw_sql(AssertSqlSafe(sql.to_owned()));
+        let first = |rows: Vec<PgRow>| rows.first().and_then(|r| r.try_get_unchecked::<Option<String>, _>(0).ok().flatten());
+        let res: AppResult<Vec<ResultSet>> = async {
+            Ok(match &self.pool {
+                Pool::Pg(p) => {
+                    let mut conn = p.acquire().await?;
+                    let pid = first(sqlx::raw_sql("SELECT pg_backend_pid()::text").fetch_all(&mut *conn).await?).unwrap_or_default();
+                    self.running.lock().unwrap().insert(query_id.into(), Cancel::Pg(pid));
+                    let out = collect_with(raw().fetch_many(&mut *conn), max_rows, |q| q.rows_affected(), pg_cell, progress).await;
+                    self.running.lock().unwrap().remove(query_id);
+                    out?
+                }
+                Pool::My(p) => {
+                    let mut conn = p.acquire().await?;
+                    let rows = sqlx::raw_sql("SELECT CONNECTION_ID()").fetch_all(&mut *conn).await?;
+                    let id = rows.first().and_then(|r| r.try_get_unchecked::<Option<String>, _>(0).ok().flatten()).unwrap_or_default();
+                    self.running.lock().unwrap().insert(query_id.into(), Cancel::My(id));
+                    let out = collect_with(raw().fetch_many(&mut *conn), max_rows, |q| q.rows_affected(), my_cell, progress).await;
+                    self.running.lock().unwrap().remove(query_id);
+                    out?
+                }
+                // SQLite runs in-process; queries are local and cannot be interrupted from here.
+                Pool::Lite(p) => collect_with(raw().fetch_many(p), max_rows, |q| q.rows_affected(), lite_cell, progress).await?,
+            })
+        }
+        .await;
+        let mut res = res.map_err(|e| {
+            let m = e.to_string().to_lowercase();
+            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") {
+                AppError::msg("Query cancelled")
+            } else {
+                e
+            }
+        });
+        if let Ok(sets) = &mut res {
+            if sets.len() <= 1 && sets.first().is_none_or(|s| s.columns.is_empty()) && returns_rows(sql) {
+                if let Some(columns) = self.describe(sql).await {
+                    if sets.is_empty() {
+                        sets.push(ResultSet::default());
+                    }
+                    sets[0].columns = columns;
+                }
+            }
+        }
+        let outcome = match &res {
+            Ok(sets) => Ok(sets.iter().map(|s| if s.columns.is_empty() { format!("{} affected", s.rows_affected) } else { format!("{} rows", s.rows.len()) }).collect::<Vec<_>>().join(", ")),
+            Err(e) => Err(e.to_string()),
+        };
+        self.record(sql, started, outcome);
+        res
+    }
+
+    /// Asks the server to stop a running query. Returns false if it already finished.
+    pub async fn cancel(&self, query_id: &str) -> AppResult<bool> {
+        let handle = match self.running.lock().unwrap().get(query_id) {
+            Some(Cancel::Pg(pid)) => Some(format!("SELECT pg_cancel_backend({})", pid.parse::<i64>().unwrap_or(0))),
+            Some(Cancel::My(id)) => Some(format!("KILL QUERY {}", id.parse::<u64>().unwrap_or(0))),
+            None => None,
+        };
+        let Some(sql) = handle else { return Ok(false) };
+        match &self.pool {
+            Pool::Pg(p) => {
+                p.execute(AssertSqlSafe(sql)).await?;
+            }
+            Pool::My(p) => {
+                p.execute(AssertSqlSafe(sql)).await?;
+            }
+            Pool::Lite(_) => return Ok(false),
+        }
+        Ok(true)
     }
 
     async fn describe(&self, sql: &str) -> Option<Vec<ColumnMeta>> {
@@ -1123,14 +1206,28 @@ fn returns_rows(sql: &str) -> bool {
     matches!(head.as_str(), "select" | "with" | "show" | "values" | "table" | "pragma" | "explain" | "describe" | "desc")
 }
 
+/// Called with the running row count while a query streams in.
+pub type Progress<'a> = Option<&'a (dyn Fn(usize) + Send + Sync)>;
+
 async fn collect<Q, R: Row>(
-    mut stream: BoxStream<'_, Result<Either<Q, R>, sqlx::Error>>,
+    stream: BoxStream<'_, Result<Either<Q, R>, sqlx::Error>>,
     max_rows: usize,
     affected: fn(&Q) -> u64,
     cell: fn(&R, usize) -> Option<String>,
 ) -> AppResult<Vec<ResultSet>> {
+    collect_with(stream, max_rows, affected, cell, None).await
+}
+
+async fn collect_with<Q, R: Row>(
+    mut stream: BoxStream<'_, Result<Either<Q, R>, sqlx::Error>>,
+    max_rows: usize,
+    affected: fn(&Q) -> u64,
+    cell: fn(&R, usize) -> Option<String>,
+    progress: Progress<'_>,
+) -> AppResult<Vec<ResultSet>> {
     let mut sets = Vec::new();
     let mut cur = ResultSet::default();
+    let mut total = 0usize;
     while let Some(item) = stream.try_next().await? {
         match item {
             Either::Left(q) => {
@@ -1150,6 +1247,12 @@ async fn collect<Q, R: Row>(
                     break;
                 }
                 cur.rows.push((0..row.len()).map(|i| cell(&row, i)).collect());
+                total += 1;
+                if let Some(p) = progress {
+                    if total % 1000 == 0 {
+                        p(total);
+                    }
+                }
             }
         }
     }
@@ -1522,5 +1625,59 @@ mod relation_tests {
             "DROP TABLE IF EXISTS rel_child; DROP TABLE IF EXISTS rel_parent;",
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+    use std::{sync::Arc, time::Instant};
+
+    fn cfg(var: &str, driver: Driver) -> Option<ConnectionConfig> {
+        let v = std::env::var(var).ok()?;
+        let p: Vec<&str> = v.split(':').collect();
+        Some(
+            serde_json::from_value(serde_json::json!({
+                "id": "cancel-test", "name": "c", "driver": driver, "sslMode": "disable",
+                "host": p[0], "port": p[1].parse::<u16>().unwrap(), "user": p[2], "database": p[3]
+            }))
+            .unwrap(),
+        )
+    }
+
+    async fn cancel_roundtrip(s: Arc<Session>, sleep_sql: &str) -> (AppResult<Vec<ResultSet>>, u128) {
+        let s2 = s.clone();
+        let sql = sleep_sql.to_string();
+        let started = Instant::now();
+        let task = tokio::spawn(async move { s2.run_cancellable(&sql, 100, "q1", None).await });
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(s.cancel("q1").await.unwrap(), "query was registered");
+        let res = task.await.unwrap();
+        let ms = started.elapsed().as_millis();
+        assert!(!s.cancel("q1").await.unwrap(), "finished queries are unregistered");
+        // The pool is still healthy afterwards.
+        assert_eq!(s.run_script("SELECT 1", 1).await.unwrap()[0].rows[0][0].as_deref(), Some("1"));
+        (res, ms)
+    }
+
+    #[tokio::test]
+    async fn postgres_cancel() {
+        let Some(c) = cfg("TABLA_TEST_PG", Driver::Postgres) else { return };
+        let s = Arc::new(Session::connect(&c, None).await.unwrap());
+        let (res, ms) = cancel_roundtrip(s, "SELECT pg_sleep(30)").await;
+        assert_eq!(res.unwrap_err().to_string(), "Query cancelled");
+        assert!(ms < 5000, "took {ms} ms");
+    }
+
+    #[tokio::test]
+    async fn mysql_cancel() {
+        let Some(c) = cfg("TABLA_TEST_MYSQL", Driver::Mysql) else { return };
+        let s = Arc::new(Session::connect(&c, None).await.unwrap());
+        // MySQL's SLEEP() returns 1 instead of failing when interrupted.
+        let (res, ms) = cancel_roundtrip(s, "SELECT SLEEP(30)").await;
+        if let Ok(sets) = res {
+            assert_eq!(sets[0].rows[0][0].as_deref(), Some("1"));
+        }
+        assert!(ms < 5000, "took {ms} ms");
     }
 }

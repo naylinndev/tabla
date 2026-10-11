@@ -153,7 +153,12 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
             state.get(&sid()?)?.table_details(&arg::<String>(&a, "schema")?, &arg::<String>(&a, "table")?).await?
         ),
         "fetch_rows" => json!(state.get(&sid()?)?.fetch_rows(&arg::<FetchArgs>(&a, "args")?).await?),
-        "run_query" => json!(state.query(&sid()?, &arg::<String>(&a, "sql")?).await?),
+        "run_query" => json!(
+            state
+                .query(&sid()?, &arg::<String>(&a, "sql")?, arg::<Option<String>>(&a, "queryId")?.as_deref(), arg(&a, "maxRows")?, None)
+                .await?
+        ),
+        "cancel_query" => json!(state.get(&sid()?)?.cancel(&arg::<String>(&a, "queryId")?).await?),
         "apply_edits" => json!(
             state
                 .get(&sid()?)?

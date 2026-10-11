@@ -58,6 +58,7 @@ pub fn run() {
             commands::redis_edit,
             commands::redis_command,
             commands::run_query,
+            commands::cancel_query,
             commands::apply_edits,
             commands::plan_alter,
             commands::apply_alter,

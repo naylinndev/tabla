@@ -24,6 +24,8 @@ use crate::{
 
 /// Hard cap on rows returned to the UI for a single ad-hoc statement.
 const QUERY_ROW_LIMIT: usize = 10_000;
+/// Upper bound the user can choose for one result.
+const MAX_QUERY_ROWS: usize = 200_000;
 
 pub enum AnySession {
     Sql(Arc<Session>),
@@ -147,10 +149,21 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn query(&self, session_id: &str, sql: &str) -> AppResult<QueryOutcome> {
+    pub async fn query(
+        &self,
+        session_id: &str,
+        sql: &str,
+        query_id: Option<&str>,
+        max_rows: Option<usize>,
+        progress: crate::db::Progress<'_>,
+    ) -> AppResult<QueryOutcome> {
         let session = self.get(session_id)?;
         let started = Instant::now();
-        let results = session.run_script(sql, QUERY_ROW_LIMIT).await?;
+        let limit = max_rows.unwrap_or(QUERY_ROW_LIMIT).clamp(1, MAX_QUERY_ROWS);
+        let results = match query_id {
+            Some(id) => session.run_cancellable(sql, limit, id, progress).await?,
+            None => session.run_script(sql, limit).await?,
+        };
         Ok(QueryOutcome { results, elapsed_ms: started.elapsed().as_millis() })
     }
 }
@@ -365,9 +378,33 @@ pub async fn fetch_rows(state: State<'_, AppState>, session_id: String, args: Fe
     state.get(&session_id)?.fetch_rows(&args).await
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct QueryProgress<'a> {
+    query_id: &'a str,
+    rows: usize,
+}
+
 #[tauri::command]
-pub async fn run_query(state: State<'_, AppState>, session_id: String, sql: String) -> AppResult<QueryOutcome> {
-    state.query(&session_id, &sql).await
+pub async fn run_query(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    sql: String,
+    query_id: Option<String>,
+    max_rows: Option<usize>,
+) -> AppResult<QueryOutcome> {
+    use tauri::Emitter;
+    let qid = query_id.clone().unwrap_or_default();
+    let notify = move |rows: usize| {
+        let _ = app.emit("query-progress", QueryProgress { query_id: &qid, rows });
+    };
+    state.query(&session_id, &sql, query_id.as_deref(), max_rows, Some(&notify)).await
+}
+
+#[tauri::command]
+pub async fn cancel_query(state: State<'_, AppState>, session_id: String, query_id: String) -> AppResult<bool> {
+    state.get(&session_id)?.cancel(&query_id).await
 }
 
 #[tauri::command]

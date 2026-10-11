@@ -262,7 +262,9 @@ export const api = {
   tableDetails: (sessionId: string, schema: string, table: string) =>
     invoke<TableDetails>("table_details", { sessionId, schema, table }),
   fetchRows: (sessionId: string, args: FetchArgs) => invoke<TablePage>("fetch_rows", { sessionId, args }),
-  runQuery: (sessionId: string, sql: string) => invoke<QueryOutcome>("run_query", { sessionId, sql }),
+  runQuery: (sessionId: string, sql: string, opts?: { queryId?: string; maxRows?: number }) =>
+    invoke<QueryOutcome>("run_query", { sessionId, sql, queryId: opts?.queryId ?? null, maxRows: opts?.maxRows ?? null }),
+  cancelQuery: (sessionId: string, queryId: string) => invoke<boolean>("cancel_query", { sessionId, queryId }),
   applyEdits: (sessionId: string, schema: string, table: string, edits: RowEdit[]) =>
     invoke<number>("apply_edits", { sessionId, schema, table, edits }),
   planAlter: (sessionId: string, req: AlterRequest) => invoke<string[]>("plan_alter", { sessionId, req }),

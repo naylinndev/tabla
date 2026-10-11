@@ -9,6 +9,7 @@ import { format as formatSql } from "sql-formatter";
 import {
   AlertTriangle,
   BookMarked,
+  Square,
   Save,
   CheckCircle2,
   Clock,
@@ -23,10 +24,11 @@ import {
   XCircle,
 } from "lucide-react";
 import { api, errorMessage, type QueryOutcome } from "../lib/api";
-import { pushHistory, readHistory, useApp, type QueryTab, type Session } from "../lib/store";
+import { local, pushHistory, readHistory, useApp, type QueryTab, type Session } from "../lib/store";
 import { resultSummary, splitStatements, statementAt, toCSV, toJSON, toTSV } from "../lib/sql";
 import { DataGrid, type Cursor } from "./DataGrid";
 import { snippetsFor } from "../lib/snippets";
+import { Select } from "./controls";
 import { Modal } from "./ui";
 import { engineLabel, schemaLines, tablesIn } from "../lib/ai";
 import { aiFixPrompt } from "../lib/errorHelp";
@@ -60,6 +62,46 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const [running, setRunning] = useState(false);
+  const queryIdRef = useRef<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [cancelling, setCancelling] = useState(false);
+  const [maxRows, setMaxRows] = useState<number>(() => local.get("tabla.maxRows", 10000));
+  useEffect(() => {
+    if (!running) return;
+    const start = Date.now();
+    setElapsed(0);
+    const t = setInterval(() => setElapsed(Date.now() - start), 100);
+    let unlisten: (() => void) | undefined;
+    // Progress events only exist inside the desktop app.
+    if ("__TAURI_EVENT_PLUGIN_INTERNALS__" in window || (window as unknown as { __TAURI_INTERNALS__?: { transformCallback?: unknown } }).__TAURI_INTERNALS__?.transformCallback) {
+      import("@tauri-apps/api/event")
+        .then(({ listen }) =>
+          listen<{ queryId: string; rows: number }>("query-progress", (e) => {
+            if (e.payload.queryId === queryIdRef.current) setProgress(e.payload.rows);
+          }),
+        )
+        .then((u) => (unlisten = u))
+        .catch(() => {});
+    }
+    return () => {
+      clearInterval(t);
+      unlisten?.();
+    };
+  }, [running]);
+  const cancel = async () => {
+    const qid = queryIdRef.current;
+    if (!qid) return;
+    setCancelling(true);
+    try {
+      const stopped = await api.cancelQuery(session.id, qid);
+      if (!stopped) toast(session.connection.driver === "sqlite" ? "SQLite queries run locally and can't be cancelled." : "The query had already finished.", "info");
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    } finally {
+      setCancelling(false);
+    }
+  };
   const [outcome, setOutcome] = useState<QueryOutcome | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resultIdx, setResultIdx] = useState(0);
@@ -122,7 +164,10 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
       setError(null);
       const started = performance.now();
       try {
-        const res = await api.runQuery(session.id, text);
+        const qid = crypto.randomUUID();
+        queryIdRef.current = qid;
+        setProgress(0);
+        const res = await api.runQuery(session.id, text, { queryId: qid, maxRows: maxRows });
         setOutcome(res);
         setResultIdx(Math.max(0, res.results.findIndex((r) => r.columns.length)));
         setCursor(null);
@@ -252,10 +297,15 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
   return (
     <div className="view" hidden={!active} ref={wrapRef}>
       <div className="toolbar">
-        <button className="btn primary" onClick={() => run("current")} disabled={running} title="Run statement at cursor or selection">
-          {running ? <span className="spinner" style={{ borderTopColor: "#fff" }} /> : <Play />}
-          Run <Kbd keys="Mod ↵" />
-        </button>
+        {running ? (
+          <button className="btn danger solid" onClick={cancel} disabled={cancelling} title="Stop the query on the server">
+            <Square /> {cancelling ? "Cancelling…" : "Cancel"} <span className="mono" style={{ opacity: 0.8 }}>{(elapsed / 1000).toFixed(1)}s</span>
+          </button>
+        ) : (
+          <button className="btn primary" onClick={() => run("current")} title="Run statement at cursor or selection">
+            <Play /> Run <Kbd keys="Mod ↵" />
+          </button>
+        )}
         <button className="btn" onClick={() => run("all")} disabled={running || statementCount === 0} title="Run every statement">
           <PlayCircle /> <span className="lbl">Run all{statementCount > 1 ? ` (${statementCount})` : ""}</span>
         </button>
@@ -402,7 +452,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
           <div className="q-meta">
             {running && (
               <>
-                <span className="spinner" /> Running…
+                <span className="spinner" /> Running… {progress > 0 && `${progress.toLocaleString()} rows so far`}
               </>
             )}
             {!running && outcome && result && (
@@ -422,6 +472,18 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
             )}
           </div>
           <div className="spacer" />
+          <Select
+            size="sm"
+            className="w-limit"
+            value={maxRows}
+            title="Maximum rows to load per result"
+            options={[1000, 10000, 50000, 200000].map((n) => ({ value: n, label: `${n.toLocaleString()} rows`, hint: "max" }))}
+            onChange={(v) => {
+              const n = Number(v);
+              local.set("tabla.maxRows", n);
+              setMaxRows(n);
+            }}
+          />
           {result && result.columns.length > 0 && (
             <>
               <button
@@ -449,9 +511,11 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
           <div className="q-error">
             <XCircle />
             <div style={{ flex: 1 }}>{error}</div>
-            <button className="btn" style={{ fontFamily: "var(--font-ui)" }} onClick={copyForAi} title="Copy the query, error and related tables as a prompt">
-              <Sparkles /> Copy for AI
-            </button>
+            {error !== "Query cancelled" && (
+              <button className="btn" style={{ fontFamily: "var(--font-ui)" }} onClick={copyForAi} title="Copy the query, error and related tables as a prompt">
+                <Sparkles /> Copy for AI
+              </button>
+            )}
           </div>
         ) : result && result.columns.length ? (
           <DataGrid
