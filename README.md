@@ -20,7 +20,7 @@ MongoDB, Redis and the clouds they run on.
 
 <br />
 
-<img src="docs/screenshots/query.png" alt="Tabla's query editor in dark mode: a SQL query joining orders, products and categories, with revenue by category and month in the results grid" width="900" />
+<img src="docs/screenshots/connect.png" alt="Tabla's New connection dialog in dark mode: pick PostgreSQL, MySQL, MariaDB, SQLite or a cloud provider like Supabase, Neon or PlanetScale, with step-by-step connection help" width="900" />
 
 </div>
 
