@@ -15,6 +15,7 @@ with the same version and **Homebrew only** ticked. Then:
 
 ```bash
 brew tap naylinndev/tabla
+brew trust --cask naylinndev/tabla/tabla
 brew install --cask tabla
 ```
 

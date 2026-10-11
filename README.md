@@ -57,19 +57,21 @@ Redis and the clouds they run on.
 
 ## Install
 
-> Tabla is in early development (v0.1). Pre-built downloads arrive with the first release.
-
-**Homebrew (macOS)**, once the first release is published:
+**Homebrew (macOS):**
 
 ```bash
 brew tap naylinndev/tabla
+brew trust --cask naylinndev/tabla/tabla
 brew install --cask tabla
 ```
 
-This also puts `tabla` on your PATH, so AI tools can run `tabla mcp`.
-Early builds are unsigned; if macOS says the app can't be opened, right-click
-**Tabla.app → Open** once (or remove the quarantine flag with
-`xattr -dr com.apple.quarantine /Applications/Tabla.app`).
+Recent Homebrew versions only load casks from third-party taps you have
+trusted, hence the `brew trust` line. This also puts `tabla` on your PATH, so
+AI tools can run `tabla mcp`. The app is signed and notarized by Apple, and it
+updates itself from inside the app.
+
+Already installed Tabla from the DMG? Add `--force` to let Homebrew take over
+the existing app.
 
 Maintainers: release and tap setup is described in [packaging/homebrew](packaging/homebrew/README.md).
 
