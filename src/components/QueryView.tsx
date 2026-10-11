@@ -8,6 +8,8 @@ import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { format as formatSql } from "sql-formatter";
 import {
   AlertTriangle,
+  BookMarked,
+  Save,
   CheckCircle2,
   Clock,
   Copy,
@@ -24,6 +26,8 @@ import { api, errorMessage, type QueryOutcome } from "../lib/api";
 import { pushHistory, readHistory, useApp, type QueryTab, type Session } from "../lib/store";
 import { resultSummary, splitStatements, statementAt, toCSV, toJSON, toTSV } from "../lib/sql";
 import { DataGrid, type Cursor } from "./DataGrid";
+import { snippetsFor } from "../lib/snippets";
+import { Modal } from "./ui";
 import { engineLabel, schemaLines, tablesIn } from "../lib/ai";
 import { aiFixPrompt } from "../lib/errorHelp";
 import { Kbd, useDrag } from "./ui";
@@ -157,6 +161,34 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
 
   const runRef = useRef(run);
   runRef.current = run;
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [naming, setNaming] = useState<string | null>(null);
+  const saveQuery = useApp((s) => s.saveQuery);
+  const saved = useApp((s) => s.saved[session.connection.id]);
+  const saveCurrent = () => {
+    const sql = cm.current?.view?.state.doc.toString() ?? tab.sql;
+    const existing = tab.savedId && saved?.find((q) => q.id === tab.savedId);
+    if (existing) {
+      saveQuery(session.connection.id, { id: existing.id, name: existing.name, sql });
+      toast(`Saved “${existing.name}”`, "success");
+    } else setNaming(tab.title.startsWith("Query ") ? "" : tab.title);
+  };
+  useEffect(() => {
+    if (!snippetsOpen) return;
+    const close = () => setSnippetsOpen(false);
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [snippetsOpen]);
+  const saveRef = useRef(saveCurrent);
+  saveRef.current = saveCurrent;
+  const insertAtCursor = (text: string) => {
+    const view = cm.current?.view;
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    const prefix = from > 0 && view.state.sliceDoc(from - 1, from) !== "\n" ? "\n\n" : "";
+    view.dispatch({ changes: { from, to, insert: prefix + text }, selection: { anchor: from + prefix.length + text.length } });
+    view.focus();
+  };
   const formatRef = useRef(doFormat);
   formatRef.current = doFormat;
 
@@ -171,6 +203,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
           { key: "Mod-Enter", run: () => (runRef.current("current"), true) },
           { key: "Shift-Mod-Enter", run: () => (runRef.current("all"), true) },
           { key: "Shift-Mod-f", run: () => (formatRef.current(), true) },
+          { key: "Mod-s", run: () => (saveRef.current(), true) },
         ]),
       ),
     ],
@@ -230,11 +263,79 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
         <button className="btn ghost" onClick={doFormat} title="Format SQL (Mod+Shift+F)">
           <Sparkles /> <span className="lbl">Format</span>
         </button>
+        <div style={{ position: "relative" }}>
+          <button className={`btn ghost ${snippetsOpen ? "on" : ""}`} onMouseDown={(e) => e.stopPropagation()} onClick={() => setSnippetsOpen(!snippetsOpen)} title="Insert a ready-made query">
+            <BookMarked /> <span className="lbl">Snippets</span>
+          </button>
+          {snippetsOpen && (
+            <div className="popover snippets" onMouseDown={(e) => e.stopPropagation()}>
+              {snippetsFor(session.connection.driver).map((sn) => (
+                <button
+                  key={sn.name}
+                  className="history-item"
+                  onClick={() => {
+                    insertAtCursor(sn.sql);
+                    setSnippetsOpen(false);
+                  }}
+                >
+                  <b className="sn-name">{sn.name}</b>
+                  <small>{sn.hint}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="spacer" />
+        <button className="btn ghost" onClick={saveCurrent} title={tab.savedId ? "Save changes to this saved query (Mod+S)" : "Save this query (Mod+S)"}>
+          <Save /> <span className="lbl">{tab.savedId ? "Save" : "Save as…"}</span>
+        </button>
         <button className={`btn ghost ${historyOpen ? "on" : ""}`} onClick={() => setHistoryOpen(!historyOpen)}>
           <History /> <span className="lbl">History</span>
         </button>
       </div>
+
+      {naming !== null && (
+        <Modal onClose={() => setNaming(null)}>
+          <div className="modal-head">
+            <Save color="var(--accent-2)" />
+            <div>
+              <h2>Save query</h2>
+              <p>Saved queries appear in the sidebar for {session.connection.name}.</p>
+            </div>
+          </div>
+          <form
+            className="modal-body"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const item = saveQuery(session.connection.id, { name: naming, sql: cm.current?.view?.state.doc.toString() ?? tab.sql });
+              updateTab(session.id, tab.id, { savedId: item.id, title: item.name });
+              setNaming(null);
+              toast(`Saved “${item.name}”`, "success");
+            }}
+          >
+            <input className="input" autoFocus placeholder="e.g. Weekly signups" value={naming} onChange={(e) => setNaming(e.target.value)} />
+            <button type="submit" hidden />
+          </form>
+          <div className="modal-foot">
+            <div className="spacer" />
+            <button className="btn" onClick={() => setNaming(null)}>
+              Cancel
+            </button>
+            <button
+              className="btn primary"
+              disabled={!naming.trim()}
+              onClick={() => {
+                const item = saveQuery(session.connection.id, { name: naming, sql: cm.current?.view?.state.doc.toString() ?? tab.sql });
+                updateTab(session.id, tab.id, { savedId: item.id, title: item.name });
+                setNaming(null);
+                toast(`Saved “${item.name}”`, "success");
+              }}
+            >
+              <Save /> Save
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {historyOpen && (
         <div className="popover history">

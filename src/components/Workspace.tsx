@@ -19,13 +19,16 @@ import {
   SunMoon,
   Table2,
   TerminalSquare,
+  Pencil,
+  Copy,
+  Trash2,
   Users as UsersIcon,
   X,
 } from "lucide-react";
-import { local, newConnection, useApp, type Session, type Tab } from "../lib/store";
+import { local, newConnection, useApp, type SavedQuery, type Session, type Tab } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { schemaPrompt } from "../lib/ai";
-import { Kbd, TagBadge, useDrag } from "./ui";
+import { ContextMenu, Kbd, Modal, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
 import { CreateTableDialog } from "./CreateTable";
@@ -146,6 +149,9 @@ export function Sidebar({ session }: { session: Session }) {
   const toast = useApp((s) => s.toast);
   const [copying, setCopying] = useState(false);
   const [creating, setCreating] = useState(false);
+  const savedQueries = useApp((s) => s.saved[c.id]) ?? [];
+  const [savedMenu, setSavedMenu] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [renamingSaved, setRenamingSaved] = useState<SavedQuery | null>(null);
   const [width, setWidth] = useState(() => local.get("tabla.sidebarWidth", 272));
   const startW = useRef(width);
   const saveWidth = (w: number) => {
@@ -207,6 +213,65 @@ export function Sidebar({ session }: { session: Session }) {
   return (
     <aside className="sidebar" style={{ width }}>
       {tableMenu.element}
+      {savedMenu && (
+        <ContextMenu
+          x={savedMenu.x}
+          y={savedMenu.y}
+          onClose={() => setSavedMenu(null)}
+          items={[
+            {
+              label: "Open",
+              icon: <FileCode2 />,
+              onClick: () => {
+                const sq = savedQueries.find((x) => x.id === savedMenu.id);
+                if (sq) newQuery(session.id, sq.sql, { title: sq.name, savedId: sq.id });
+              },
+            },
+            {
+              label: "Rename…",
+              icon: <Pencil />,
+              onClick: () => setRenamingSaved(savedQueries.find((x) => x.id === savedMenu.id) ?? null),
+            },
+            {
+              label: "Copy SQL",
+              icon: <Copy />,
+              onClick: () => navigator.clipboard.writeText(savedQueries.find((x) => x.id === savedMenu.id)?.sql ?? ""),
+            },
+            "sep",
+            { label: "Delete", icon: <Trash2 />, danger: true, onClick: () => useApp.getState().deleteSaved(c.id, savedMenu.id) },
+          ]}
+        />
+      )}
+      {renamingSaved && (
+        <Modal onClose={() => setRenamingSaved(null)}>
+          <div className="modal-head">
+            <Pencil color="var(--accent-2)" />
+            <div>
+              <h2>Rename saved query</h2>
+            </div>
+          </div>
+          <div className="modal-body">
+            <input className="input" autoFocus defaultValue={renamingSaved.name} id="rename-saved" onKeyDown={(e) => e.key === "Enter" && (document.getElementById("rename-saved-ok") as HTMLButtonElement)?.click()} />
+          </div>
+          <div className="modal-foot">
+            <div className="spacer" />
+            <button className="btn" onClick={() => setRenamingSaved(null)}>
+              Cancel
+            </button>
+            <button
+              id="rename-saved-ok"
+              className="btn primary"
+              onClick={() => {
+                const v = (document.getElementById("rename-saved") as HTMLInputElement).value;
+                useApp.getState().saveQuery(c.id, { id: renamingSaved.id, name: v, sql: renamingSaved.sql });
+                setRenamingSaved(null);
+              }}
+            >
+              Rename
+            </button>
+          </div>
+        </Modal>
+      )}
       {creating && <CreateTableDialog session={session} onClose={() => setCreating(false)} />}
       <div
         className={`sb-resize ${resize.active ? "on" : ""}`}
@@ -295,6 +360,30 @@ export function Sidebar({ session }: { session: Session }) {
               Views <span className="count">{views.length}</span>
             </div>
             {views.map(item)}
+          </>
+        )}
+        {savedQueries.length > 0 && (
+          <>
+            <div className="sb-section">
+              Saved queries <span className="count">{savedQueries.length}</span>
+            </div>
+            {savedQueries
+              .filter((sq) => fuzzy(sq.name, q))
+              .map((sq) => (
+                <button
+                  key={sq.id}
+                  className={`sb-item ${active?.kind === "query" && active.savedId === sq.id ? "active" : ""}`}
+                  onClick={() => newQuery(session.id, sq.sql, { title: sq.name, savedId: sq.id })}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setSavedMenu({ x: e.clientX, y: e.clientY, id: sq.id });
+                  }}
+                  title={sq.sql}
+                >
+                  <FileCode2 />
+                  <span className="name">{highlight(sq.name, q)}</span>
+                </button>
+              ))}
           </>
         )}
       </div>

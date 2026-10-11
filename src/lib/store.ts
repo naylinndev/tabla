@@ -11,7 +11,13 @@ export type TableTab = {
   /** Opened by following a foreign key: start filtered to this value. */
   initialFilter?: { column: string; value: string | null };
 };
-export type QueryTab = { id: string; kind: "query"; title: string; sql: string };
+export type QueryTab = { id: string; kind: "query"; title: string; sql: string; savedId?: string };
+export interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  updatedAt: number;
+}
 export type UsersTab = { id: string; kind: "users"; title: string };
 export type Tab = TableTab | QueryTab | UsersTab;
 
@@ -64,7 +70,11 @@ interface State {
   refreshTables(sessionId: string): Promise<void>;
   setColumns(sessionId: string, table: string, cols: string[]): void;
   openTable(sessionId: string, schema: string, table: string, view?: TableView, forceNew?: boolean, initialFilter?: TableTab["initialFilter"]): void;
-  newQuery(sessionId: string, sql?: string): void;
+  newQuery(sessionId: string, sql?: string, opts?: { title?: string; savedId?: string }): void;
+  /** Saved queries per connection (stored locally on this computer). */
+  saved: Record<string, SavedQuery[]>;
+  saveQuery(connId: string, q: { id?: string; name: string; sql: string }): SavedQuery;
+  deleteSaved(connId: string, id: string): void;
   openUsers(sessionId: string): void;
   updateTab(sessionId: string, tabId: string, patch: Partial<Tab>): void;
   /** Asks first if the tab has uncommitted edits, unless `force`. */
@@ -107,7 +117,7 @@ export const local = {
 const draftsKey = (connId: string) => `tabla.drafts.${connId}`;
 
 function saveDrafts(s: Session) {
-  const drafts = s.tabs.filter((t): t is QueryTab => t.kind === "query").map((t) => ({ title: t.title, sql: t.sql }));
+  const drafts = s.tabs.filter((t): t is QueryTab => t.kind === "query").map((t) => ({ title: t.title, sql: t.sql, savedId: t.savedId }));
   local.set(draftsKey(s.connection.id), drafts);
 }
 
@@ -180,8 +190,9 @@ export const useApp = create<State>((set, get) => {
         const info = await api.openSession(c);
         const schema =
           info.currentSchema && info.schemas.includes(info.currentSchema) ? info.currentSchema : info.schemas[0] ?? "";
-        const drafts = local.get<{ title: string; sql: string }[]>(draftsKey(c.id), []);
-        const tabs: Tab[] = drafts.map((d) => ({ id: uid(), kind: "query", title: d.title, sql: d.sql }));
+        const drafts = local.get<{ title: string; sql: string; savedId?: string }[]>(draftsKey(c.id), []);
+        const tabs: Tab[] = drafts.map((d) => ({ id: uid(), kind: "query", title: d.title, sql: d.sql, savedId: d.savedId }));
+        set((st) => ({ saved: { ...st.saved, [c.id]: local.get<SavedQuery[]>(`tabla.saved.${c.id}`, []) } }));
         const session: Session = {
           id: info.sessionId,
           connection: { ...c, password: undefined, sshSecret: undefined },
@@ -266,11 +277,15 @@ export const useApp = create<State>((set, get) => {
       });
     },
 
-    newQuery(sessionId, sql = "") {
+    newQuery(sessionId, sql = "", opts) {
       const s = get().sessions.find((x) => x.id === sessionId);
       if (!s) return;
+      if (opts?.savedId) {
+        const open = s.tabs.find((t) => t.kind === "query" && t.savedId === opts.savedId);
+        if (open) return patchSession(sessionId, () => ({ activeTabId: open.id }));
+      }
       const n = s.tabs.filter((t) => t.kind === "query").length + 1;
-      const tab: QueryTab = { id: uid(), kind: "query", title: `Query ${n}`, sql };
+      const tab: QueryTab = { id: uid(), kind: "query", title: opts?.title ?? `Query ${n}`, sql, savedId: opts?.savedId };
       patchSession(sessionId, (s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id }));
     },
 
@@ -317,6 +332,31 @@ export const useApp = create<State>((set, get) => {
 
     setActiveTab(sessionId, tabId) {
       patchSession(sessionId, () => ({ activeTabId: tabId }));
+    },
+
+    saved: {},
+
+    saveQuery(connId, q) {
+      const list = get().saved[connId] ?? local.get<SavedQuery[]>(`tabla.saved.${connId}`, []);
+      const item: SavedQuery = { id: q.id ?? uid(), name: q.name.trim() || "Untitled query", sql: q.sql, updatedAt: Date.now() };
+      const next = [item, ...list.filter((x) => x.id !== item.id)].sort((a, b) => a.name.localeCompare(b.name));
+      local.set(`tabla.saved.${connId}`, next);
+      set((st) => ({
+        saved: { ...st.saved, [connId]: next },
+        // Keep open tabs that show this query in sync.
+        sessions: st.sessions.map((s) =>
+          s.connection.id !== connId
+            ? s
+            : { ...s, tabs: s.tabs.map((t) => (t.kind === "query" && t.savedId === item.id ? { ...t, title: item.name } : t)) },
+        ),
+      }));
+      return item;
+    },
+
+    deleteSaved(connId, id) {
+      const next = (get().saved[connId] ?? local.get<SavedQuery[]>(`tabla.saved.${connId}`, [])).filter((x) => x.id !== id);
+      local.set(`tabla.saved.${connId}`, next);
+      set((st) => ({ saved: { ...st.saved, [connId]: next } }));
     },
 
     setTheme(theme) {
