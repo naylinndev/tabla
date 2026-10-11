@@ -32,6 +32,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     env:
       HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && vars.TAURI_UPDATER_PUBKEY != '' }}
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -68,17 +69,35 @@ jobs:
             echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
           } >> "$GITHUB_ENV"
 
+      # One-click in-app updates switch on once the updater key exists (see
+      # packaging/homebrew/README.md). The build then signs its update bundles,
+      # attaches latest.json to the release, and embeds the public key.
+      - name: Enable signed in-app updates
+        if: env.HAS_UPDATER_KEY == 'true'
+        shell: bash
+        env:
+          PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+        run: |
+          node -e '
+            const conf = { bundle: { createUpdaterArtifacts: true }, plugins: { updater: {
+              pubkey: process.env.PUBKEY.trim(),
+              endpoints: ["https://github.com/naylinndev/tabla/releases/latest/download/latest.json"] } } };
+            require("fs").writeFileSync("src-tauri/tauri.updater.conf.json", JSON.stringify(conf, null, 2));'
+          echo "UPDATER_ARGS=--config src-tauri/tauri.updater.conf.json" >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Tabla ${{ github.ref_name }}
           releaseBody: |
-            See the README for install options. macOS: `brew install --cask naylinndev/tabla/tabla`.
+            See the README for install options. macOS: `brew tap naylinndev/tabla && brew install --cask tabla`.
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} ${{ env.UPDATER_ARGS }}
 
   homebrew:
     needs: build

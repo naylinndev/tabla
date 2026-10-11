@@ -131,6 +131,8 @@ Tabla connects straight to your database and touches nothing else.
   makes on its own is a daily update check against GitHub Releases (a plain
   GET, no identifiers), which you can turn off under **Appearance → Updates**.
   DuckDB extensions are only downloaded when you run `INSTALL` yourself.
+  Updates are downloaded only when you click **Install and restart**, and are
+  installed only if they carry a valid signature from Tabla's release key.
 
 Found a vulnerability? Please open a private
 [security advisory](https://github.com/naylinndev/tabla/security/advisories/new)
@@ -255,7 +257,7 @@ src-tauri/            Rust backend
 - [x] Query cancellation and adjustable result size
 - [x] ER diagram
 - [x] Update notifications (daily check against GitHub Releases)
-- [ ] One-click in-place updates (needs the updater signing key; see packaging/homebrew/README.md)
+- [x] One-click in-place updates (signed; switched on by adding the updater key, see [packaging/homebrew](packaging/homebrew/README.md#one-click-updates-recommended))
 
 ## Contributing
 

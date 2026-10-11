@@ -11,6 +11,8 @@ pub const REPO: &str = "naylinndev/tabla";
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
+    /// The in-app updater can install this release (signed release build, supported install).
+    pub can_install: bool,
     pub current: String,
     pub latest: String,
     pub available: bool,
@@ -58,6 +60,7 @@ pub fn check() -> AppResult<UpdateInfo> {
     }
     let latest = r.tag_name.trim_start_matches('v').to_string();
     Ok(UpdateInfo {
+        can_install: false,
         available: is_newer(&latest, &current),
         current,
         latest,
@@ -65,6 +68,21 @@ pub fn check() -> AppResult<UpdateInfo> {
         notes: r.body.chars().take(1200).collect(),
         published: r.published_at,
     })
+}
+
+/// Signed update manifest that release builds attach to each GitHub release.
+pub const MANIFEST_URL: &str = "https://github.com/naylinndev/tabla/releases/latest/download/latest.json";
+
+/// Whether this build was configured with an updater public key, which only
+/// release builds signed with the project's updater key are.
+pub fn updater_configured(config: &tauri::Config) -> bool {
+    config.plugins.0.get("updater").and_then(|u| u.get("pubkey")).and_then(|k| k.as_str()).is_some_and(|k| !k.trim().is_empty())
+}
+
+/// Whether this copy of Tabla can replace itself. Linux packages (.deb) are
+/// updated by the package manager; only the AppImage updates in place.
+pub fn install_supported() -> bool {
+    if cfg!(target_os = "linux") { std::env::var_os("APPIMAGE").is_some() } else { true }
 }
 
 /// Only the project's own pages may be opened from the app.
@@ -83,6 +101,19 @@ mod tests {
         assert!(is_newer("1.0.0", "0.99.99"));
         assert!(!is_newer("0.1.0", "0.1.0"));
         assert!(!is_newer("0.1.0", "0.2.0"));
+    }
+
+    #[test]
+    fn updater_needs_a_public_key() {
+        let cfg = |plugins: serde_json::Value| -> tauri::Config {
+            serde_json::from_value(serde_json::json!({ "identifier": "dev.tabla.test", "plugins": plugins })).unwrap()
+        };
+        assert!(!updater_configured(&cfg(serde_json::json!({}))));
+        assert!(!updater_configured(&cfg(serde_json::json!({ "updater": { "pubkey": " " } }))));
+        assert!(updater_configured(&cfg(serde_json::json!({ "updater": { "pubkey": "dW50cnVzdGVk", "endpoints": [MANIFEST_URL] } }))));
+        // The app's own config ships without one; release builds add it.
+        let shipped: tauri::Config = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert!(!updater_configured(&shipped));
     }
 
     #[test]

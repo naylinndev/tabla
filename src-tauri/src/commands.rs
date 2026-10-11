@@ -549,10 +549,54 @@ pub fn mcp_command() -> AppResult<McpCommand> {
 }
 
 #[tauri::command]
-pub async fn check_update() -> AppResult<crate::updates::UpdateInfo> {
-    tauri::async_runtime::spawn_blocking(crate::updates::check)
+pub async fn check_update(app: AppHandle) -> AppResult<crate::updates::UpdateInfo> {
+    let mut info = tauri::async_runtime::spawn_blocking(crate::updates::check).await.map_err(|e| AppError::msg(e.to_string()))??;
+    info.can_install = info.available && crate::updates::updater_configured(app.config()) && crate::updates::install_supported();
+    Ok(info)
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// Downloads the latest release, verifies its signature against the public
+/// key built into this release, installs it and restarts Tabla.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> AppResult<()> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+    if !crate::updates::updater_configured(app.config()) {
+        return Err(AppError::msg("This build of Tabla can't update itself. Download the new version from the release page."));
+    }
+    if !crate::updates::install_supported() {
+        return Err(AppError::msg("Update Tabla with your package manager, or download the new version from the release page."));
+    }
+    let url = crate::updates::MANIFEST_URL.parse::<tauri::Url>().map_err(|e| AppError::msg(e.to_string()))?;
+    let updater = app
+        .updater_builder()
+        .endpoints(vec![url])
+        .and_then(|b| b.build())
+        .map_err(|e| AppError::msg(format!("Couldn't start the updater: {e}")))?;
+    let update = updater
+        .check()
         .await
-        .map_err(|e| AppError::msg(e.to_string()))?
+        .map_err(|e| AppError::msg(format!("Couldn't check for updates: {e}")))?
+        .ok_or_else(|| AppError::msg("You're already on the latest version."))?;
+    let mut downloaded = 0u64;
+    update
+        .download_and_install(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                let _ = app.emit("update-progress", UpdateProgress { downloaded, total });
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| AppError::msg(format!("The update couldn't be installed: {e}")))?;
+    app.restart()
 }
 
 /// Opens a page of the Tabla project (releases, issues…) in the default browser.

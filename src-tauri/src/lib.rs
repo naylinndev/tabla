@@ -47,7 +47,14 @@ pub fn run_bridge() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    let mut builder = tauri::Builder::default();
+    // Release builds signed with the updater key carry its public key; others
+    // keep the "open the release page" flow.
+    if updates::updater_configured(context.config()) {
+        builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    }
+    builder
         .plugin(tauri_plugin_dialog::init())
         // Used from Rust only (open_project_page validates the URL); no web permission is granted.
         .plugin(tauri_plugin_opener::init())
@@ -89,8 +96,9 @@ pub fn run() {
             commands::scan_env_files,
             commands::mcp_command,
             commands::check_update,
+            commands::install_update,
             commands::open_project_page,
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Tabla");
 }

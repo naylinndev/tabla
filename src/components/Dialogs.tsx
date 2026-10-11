@@ -1,6 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUpCircle, Check, Copy, Monitor, Moon, Power, RefreshCw, Sun, SunMoon, TriangleAlert } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
+import { formatBytes } from "../lib/format";
 import { Checkbox } from "./controls";
 import { useApp, type FontChoice, type Theme } from "../lib/store";
 import { Modal } from "./ui";
@@ -160,27 +161,62 @@ export function AppearanceMenu({ onClose }: { onClose(): void }) {
 export function UpdateBanner() {
   const update = useApp((s) => s.update);
   const toast = useApp((s) => s.toast);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
   if (!update?.available) return null;
   const open = (url: string) => api.openProjectPage(url).catch((e) => toast(errorMessage(e), "error"));
+  const install = async () => {
+    setInstalling(true);
+    setProgress(null);
+    let unlisten: (() => void) | undefined;
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<{ downloaded: number; total: number | null }>("update-progress", (e) => setProgress(e.payload));
+    } catch {
+      // Progress is a nicety; the install still runs without it.
+    }
+    try {
+      // Tabla restarts on success, so this only returns on failure.
+      await api.installUpdate();
+    } catch (e) {
+      toast(errorMessage(e), "error");
+      setInstalling(false);
+    } finally {
+      unlisten?.();
+    }
+  };
+  const pct = progress?.total ? Math.min(100, Math.round((progress.downloaded / progress.total) * 100)) : null;
   return (
     <div className="update-banner">
       <ArrowUpCircle />
       <div style={{ flex: 1, minWidth: 0 }}>
         <b>Tabla {update.latest} is available</b>
         <span className="dim"> · you have {update.current}</span>
-        <div className="update-brew">
-          Homebrew: <code>brew upgrade --cask tabla</code>
-          <button className="icon-btn" style={{ width: 22, height: 22 }} title="Copy command" onClick={() => navigator.clipboard.writeText("brew upgrade --cask tabla").then(() => toast("Copied", "success"))}>
-            <Copy size={12} />
-          </button>
-        </div>
+        {installing ? (
+          <div className="update-brew">
+            <span className="spinner" /> {progress ? (pct !== null ? `Downloading… ${pct}%` : `Downloading… ${formatBytes(progress.downloaded)}`) : "Preparing the update…"}
+          </div>
+        ) : (
+          <div className="update-brew">
+            Homebrew: <code>brew upgrade --cask tabla</code>
+            <button className="icon-btn" style={{ width: 22, height: 22 }} title="Copy command" onClick={() => navigator.clipboard.writeText("brew upgrade --cask tabla").then(() => toast("Copied", "success"))}>
+              <Copy size={12} />
+            </button>
+          </div>
+        )}
       </div>
       <button className="btn ghost" onClick={() => open(update.url)}>
         Release notes
       </button>
-      <button className="btn primary" onClick={() => open(update.url)}>
-        Download
-      </button>
+      {update.canInstall ? (
+        <button className="btn primary" onClick={install} disabled={installing}>
+          {installing ? "Installing…" : "Install and restart"}
+        </button>
+      ) : (
+        <button className="btn primary" onClick={() => open(update.url)}>
+          Download
+        </button>
+      )}
     </div>
   );
 }

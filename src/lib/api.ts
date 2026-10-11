@@ -160,6 +160,8 @@ export type RedisEdit =
   | { op: "rename"; key: string; to: string };
 
 export interface UpdateInfo {
+  /** This build can download, verify and install the release itself. */
+  canInstall: boolean;
   current: string;
   latest: string;
   available: boolean;
@@ -289,6 +291,8 @@ export const api = {
     invoke<string | null>("export_file", { defaultName, contents }),
   scanEnvFiles: () => invoke<EnvUrl[] | null>("scan_env_files"),
   checkUpdate: () => invoke<UpdateInfo>("check_update"),
+  /** Installs the latest release and restarts; resolves only if it fails. */
+  installUpdate: () => invoke<void>("install_update"),
   openProjectPage: (url: string) => invoke<void>("open_project_page", { url }),
   mcpCommand: () => invoke<{ binary: string; installed: boolean }>("mcp_command"),
 };
