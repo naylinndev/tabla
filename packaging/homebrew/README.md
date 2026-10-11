@@ -67,7 +67,7 @@ only you hold; the app refuses anything not signed by it. To switch it on once:
      `~/.tauri/tabla-updater.key`) and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
    - **Variables:** add `TAURI_UPDATER_PUBKEY` (the contents of
      `~/.tauri/tabla-updater.key.pub`).
-3. Tag the next release. The workflow signs the update bundles, attaches
+3. Run the next release (Actions → Release → Run workflow). The workflow signs the update bundles, attaches
    `latest.json`, and builds the public key into the app.
 
 Builds made before the key existed (or from source) keep the "Download"

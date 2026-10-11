@@ -1,13 +1,13 @@
 name: Release
 
-# Run this workflow by hand with a version (or push a tag like v0.2.0) to build
+# Run this workflow by hand with a version to build
 # installers for macOS (Apple Silicon + Intel), Windows and Linux and attach
 # them to a draft GitHub Release. Publishing that draft creates the tag (which
 # doesn't rebuild anything) and, when the tap token is configured, updates the
 # Homebrew cask.
+# No tag-push trigger: publishing a release creates its tag, and that must not
+# rebuild (and replace) the installers that were just published.
 on:
-  push:
-    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
