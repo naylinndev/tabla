@@ -47,3 +47,70 @@ jobs:
             echo "::error title=cargo test (tail)::$(tail -25 clean.log | tr '\n' '|' | cut -c1-3500)"
           fi
           exit "$status"
+
+  # Integration tests against real database servers (service containers).
+  databases:
+    runs-on: ubuntu-22.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: tabla_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+          MYSQL_DATABASE: tabla_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1" --health-interval 5s --health-timeout 5s --health-retries 30
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: System libraries and clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev postgresql-client mysql-client sqlite3
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Seed test databases
+        run: |
+          psql -h 127.0.0.1 -U postgres -d tabla_test -v ON_ERROR_STOP=1 -f tests/fixtures/seed_postgres.sql
+          mysql -h 127.0.0.1 -uroot tabla_test < tests/fixtures/seed_mysql.sql
+          sqlite3 "$RUNNER_TEMP/tabla_test.db" < tests/fixtures/seed_sqlite.sql
+      - name: Integration tests
+        working-directory: src-tauri
+        shell: bash
+        env:
+          TABLA_TEST_PG: "127.0.0.1:5432:postgres:tabla_test"
+          TABLA_TEST_MYSQL: "127.0.0.1:3306:root:tabla_test"
+          TABLA_TEST_REDIS: "127.0.0.1:6379:9"
+        run: |
+          export TABLA_TEST_SQLITE="$RUNNER_TEMP/tabla_test.db"
+          export TABLA_CONFIG_DIR="$RUNNER_TEMP/tabla-config"
+          set +e
+          CARGO_TERM_COLOR=never cargo test --lib 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E "error(\[|:)|panicked at|FAILED|could not compile|-->" test.log | head -30 | while IFS= read -r line; do
+              echo "::error title=integration tests::${line}"
+            done
+          fi
+          exit "$status"
