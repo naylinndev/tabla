@@ -30,6 +30,7 @@ import { isSystemSchema, local, newConnection, useApp, type SavedQuery, type Ses
 import { isLocal } from "../lib/api";
 import { DriverIcon } from "./icons";
 import { schemaPrompt, engineName } from "../lib/ai";
+import { copyWhenReady } from "../lib/clipboard";
 import { ContextMenu, Kbd, Modal, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
@@ -171,8 +172,7 @@ function Sidebar({ session }: { session: Session }) {
   const copySchema = async () => {
     setCopying(true);
     try {
-      const text = await schemaPrompt(session);
-      await navigator.clipboard.writeText(text);
+      await copyWhenReady(schemaPrompt(session));
       toast("Schema copied. Paste it into ChatGPT, Claude or Cursor.", "success");
     } catch (e) {
       toast(String(e), "error");

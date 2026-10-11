@@ -25,6 +25,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api, errorMessage, type QueryOutcome } from "../lib/api";
+import { copyWhenReady } from "../lib/clipboard";
 import { local, pushHistory, readHistory, useApp, type QueryTab, type Session } from "../lib/store";
 import { resultSummary, splitStatements, statementAt, toCSV, toJSON, toTSV } from "../lib/sql";
 import { DataGrid, type Cursor } from "./DataGrid";
@@ -285,15 +286,15 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
   const copyForAi = async () => {
     if (!error) return;
     const sqlText = lastSql.current || tab.sql;
-    let schema = "";
+    const names = tablesIn(sqlText, session);
+    // Schema is optional context: a failed lookup still copies the prompt.
+    const schema = names.length ? schemaLines(session, names, 10).catch(() => "") : Promise.resolve("");
     try {
-      const names = tablesIn(sqlText, session);
-      schema = names.length ? await schemaLines(session, names, 10) : "";
-    } catch {
-      /* schema is optional context */
+      await copyWhenReady(schema.then((s) => aiFixPrompt({ engine: engineLabel(session), sql: sqlText, error, schema: s })));
+      toast("Copied. Paste it into your AI assistant.", "success");
+    } catch (e) {
+      toast(errorMessage(e), "error");
     }
-    await navigator.clipboard.writeText(aiFixPrompt({ engine: engineLabel(session), sql: sqlText, error, schema }));
-    toast("Copied. Paste it into your AI assistant.", "success");
   };
 
   return (

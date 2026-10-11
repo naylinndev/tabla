@@ -3,6 +3,7 @@ import { Copy, CopyPlus, Download, Eraser, ExternalLink, FileCode2, Info, PenLin
 import { api, errorMessage, isLocal, type Driver, type TableInfo } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
 import { toCSV } from "../lib/sql";
+import { copyWhenReady } from "../lib/clipboard";
 import { isSystemSchema, useApp, type Session } from "../lib/store";
 import { ContextMenu, Modal, type MenuItem } from "./ui";
 import { Checkbox } from "./controls";
@@ -57,8 +58,7 @@ export function useTableMenu(session: Session) {
       icon: <FileCode2 />,
       onClick: async () => {
         try {
-          const info = await api.tableDetails(session.id, session.schema, t.name);
-          await navigator.clipboard.writeText(info.ddl ?? "");
+          await copyWhenReady(api.tableDetails(session.id, session.schema, t.name).then((info) => info.ddl ?? ""));
           toast("Create syntax copied", "success");
         } catch (e) {
           toast(errorMessage(e), "error");
