@@ -40,6 +40,8 @@ tiberius = { version = "0.13.0", default-features = false, features = ["rustls",
 tokio-util = { version = "0.7.20", features = ["compat"] }
 chrono = "0.4.45"
 reqwest = { version = "0.13", default-features = false, features = ["query", "rustls", "stream"] }
+oracle = "0.6.3"
+zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 duckdb = { version = "1.10506.0", features = ["bundled", "json", "parquet"] }
 
 
@@ -58,3 +60,7 @@ debug = false
 
 [dev-dependencies]
 tokio = { version = "1.53.2", features = ["macros", "rt-multi-thread"] }
+
+# rust-oracle with JSON and VECTOR columns fetched as text; see vendor/oracle/VENDORED.md.
+[patch.crates-io]
+oracle = { path = "vendor/oracle" }

@@ -85,9 +85,9 @@ pub fn install_supported() -> bool {
     if cfg!(target_os = "linux") { std::env::var_os("APPIMAGE").is_some() } else { true }
 }
 
-/// Only the project's own pages may be opened from the app.
+/// Only the project's own pages (and Oracle's Instant Client license) may be opened from the app.
 pub fn is_allowed_url(url: &str) -> bool {
-    url.starts_with(&format!("https://github.com/{REPO}/")) || url == format!("https://github.com/{REPO}")
+    url.starts_with(&format!("https://github.com/{REPO}/")) || url == format!("https://github.com/{REPO}") || url == crate::oracle_client::LICENSE_URL
 }
 
 #[cfg(test)]

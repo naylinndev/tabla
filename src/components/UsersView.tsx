@@ -26,6 +26,20 @@ function grantSql(d: Driver, who: string, scope: string, level: Level, revoke = 
       : [`GRANT ${level === "all" ? "CONTROL" : privs} ON SCHEMA::${s} TO ${who}`];
   if (d === "mysql") return revoke ? [`REVOKE ALL PRIVILEGES ON ${s}.* FROM ${who}`] : [`GRANT ${privs} ON ${s}.* TO ${who}`];
   if (d === "clickhouse") return revoke ? [`REVOKE ALL ON ${s}.* FROM ${who}`] : [`GRANT ${level === "all" ? "ALL" : privs} ON ${s}.* TO ${who}`];
+  // Oracle grants per object: one block grants on every table (and view, for reading) in the schema.
+  if (d === "oracle") {
+    const lit = (x: string) => x.replace(/'/g, "''");
+    if (revoke)
+      return [
+        `BEGIN\n  FOR o IN (SELECT DISTINCT table_name FROM all_tab_privs WHERE grantee = '${lit(who.slice(1, -1))}' AND table_schema = '${lit(scope)}') LOOP\n` +
+          `    EXECUTE IMMEDIATE 'REVOKE ALL ON ${lit(s)}."' || o.table_name || '" FROM ${lit(who)}';\n  END LOOP;\nEND;`,
+      ];
+    const kinds = level === "read" ? "'TABLE', 'VIEW'" : "'TABLE'";
+    return [
+      `BEGIN\n  FOR o IN (SELECT object_name FROM all_objects WHERE owner = '${lit(scope)}' AND object_type IN (${kinds})) LOOP\n` +
+        `    EXECUTE IMMEDIATE 'GRANT ${level === "all" ? "ALL" : privs} ON ${lit(s)}."' || o.object_name || '" TO ${lit(who)}';\n  END LOOP;\nEND;`,
+    ];
+  }
   const pgPrivs = level === "all" ? "ALL" : privs;
   if (revoke)
     return [
@@ -45,7 +59,11 @@ function grantSql(d: Driver, who: string, scope: string, level: Level, revoke = 
 
 const MASK = "'•••'";
 
+/** Oracle passwords are written as quoted identifiers, which can't contain `"`. */
+const oraclePassword = (pw: string) => `"${pw.replace(/"/g, "")}"`;
+
 function passwordSql(d: Driver, who: string, secret: string, contained: boolean): string {
+  if (d === "oracle") return `ALTER USER ${who} IDENTIFIED BY ${secret}`;
   if (d === "mysql" || d === "clickhouse") return `ALTER USER ${who} IDENTIFIED BY ${secret}`;
   if (d === "mssql") return contained ? `ALTER USER ${who} WITH PASSWORD = ${secret}` : `ALTER LOGIN ${who} WITH PASSWORD = ${secret}`;
   return `ALTER ROLE ${who} PASSWORD ${secret}`;
@@ -155,11 +173,15 @@ export function UsersView({ session, active }: { session: Session; active: boole
                 setPending({
                   title: `Delete ${sel.name}`,
                   description:
-                    d === "mysql" || d === "mssql" || d === "clickhouse"
+                    d === "oracle"
+                      ? "The account and everything in its schema are deleted."
+                      : d === "mysql" || d === "mssql" || d === "clickhouse"
                       ? "The account can no longer sign in."
                       : "Anything it owns is handed to you first, then its privileges are removed and the role is deleted.",
                   statements:
-                    d === "mysql" || d === "clickhouse"
+                    d === "oracle"
+                      ? [`DROP USER ${who} CASCADE`]
+                      : d === "mysql" || d === "clickhouse"
                       ? [`DROP USER ${who}`]
                       : d === "mssql"
                         ? [`DROP USER IF EXISTS ${who}`, ...(contained ? [] : [`DROP LOGIN ${who}`])]
@@ -197,7 +219,7 @@ export function UsersView({ session, active }: { session: Session; active: boole
                   </h2>
                   <div className="users-badges">
                     {sel.canLogin ? <span className="badge local">can sign in</span> : <span className="badge">group role</span>}
-                    {sel.superuser && <span className="badge production">{d === "mysql" ? "super / grant" : d === "mssql" ? (contained ? "db_owner" : "sysadmin") : "superuser"}</span>}
+                    {sel.superuser && <span className="badge production">{d === "mysql" ? "super / grant" : d === "mssql" ? (contained ? "db_owner" : "sysadmin") : d === "oracle" ? "DBA" : "superuser"}</span>}
                     {sel.locked && <span className="badge staging">locked</span>}
                     {sel.validUntil && <span className="badge">{sel.validUntil}</span>}
                     {sel.memberOf.map((m) => (
@@ -228,7 +250,7 @@ export function UsersView({ session, active }: { session: Session; active: boole
                         onClick={() =>
                           setPending({
                             title: `Change password for ${sel.name}`,
-                            statements: [passwordSql(d, who, quoteLiteral(d, newPw), contained)],
+                            statements: [passwordSql(d, who, d === "oracle" ? oraclePassword(newPw) : quoteLiteral(d, newPw), contained)],
                             display: [passwordSql(d, who, MASK, contained)],
                             label: "Change password",
                           })
@@ -338,11 +360,14 @@ function CreateUser({ session, preset, onClose, onDone }: { session: Session; pr
   const [pw, setPw] = useState("");
   const [scope, setScope] = useState(session.schema);
   const [level, setLevel] = useState<Level | "none">(preset === "readonly" ? "read" : "none");
-  const u = { name: name.trim(), host };
+  // Oracle folds unquoted user names to upper case, which is how people sign in.
+  const u = { name: d === "oracle" ? name.trim().toUpperCase() : name.trim(), host };
   const who = acct(d, u);
   const contained = session.connection.provider === "azuresql";
   const create = (secret: string) =>
-    d === "mysql" || d === "clickhouse"
+    d === "oracle"
+      ? `CREATE USER ${who} IDENTIFIED BY ${secret}`
+      : d === "mysql" || d === "clickhouse"
       ? `CREATE USER ${who} IDENTIFIED BY ${secret}`
       : d === "mssql"
         ? contained
@@ -356,14 +381,16 @@ function CreateUser({ session, preset, onClose, onDone }: { session: Session; pr
       ? [`GRANT CONNECT ON DATABASE ${quoteIdent(d, session.connection.database)} TO ${who}`]
       : d === "mssql" && !contained
         ? [`CREATE USER ${who} FOR LOGIN ${who}`]
-        : [];
+        : d === "oracle"
+          ? [`GRANT CREATE SESSION TO ${who}`]
+          : [];
 
   return (
     <SqlConfirm
       session={session}
       title={preset === "readonly" ? "Create a read-only user" : "Create account"}
       description={preset === "readonly" ? "A SELECT-only account. Use it for AI assistants, dashboards and analytics so nothing can write." : undefined}
-      statements={ok ? [create(quoteLiteral(d, pw)), ...db, ...grants] : []}
+      statements={ok ? [create(d === "oracle" ? oraclePassword(pw) : quoteLiteral(d, pw)), ...db, ...grants] : []}
       displayStatements={ok ? [create(MASK), ...db, ...grants] : [create(MASK)]}
       confirmLabel="Create account"
       onDone={onDone}

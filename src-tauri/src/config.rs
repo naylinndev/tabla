@@ -25,6 +25,7 @@ pub enum Driver {
     Mssql,
     Clickhouse,
     Duckdb,
+    Oracle,
 }
 
 impl Driver {
@@ -37,6 +38,7 @@ impl Driver {
             Driver::Mssql => 1433,
             Driver::Clickhouse => 8123,
             Driver::Duckdb => 0,
+            Driver::Oracle => 1521,
         }
     }
 

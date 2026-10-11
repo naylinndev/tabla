@@ -79,6 +79,20 @@ impl Session {
                 )
                 .await
                 .map_err(|e| AppError::msg(format!("Can't list accounts: {e}. Your user needs the SHOW USERS privilege.")))?,
+            // DBA views when readable; otherwise every user name, without details.
+            Driver::Oracle => {
+                let dba = "SELECT u.username, '', CASE WHEN u.account_status LIKE '%LOCKED%' THEN '0' ELSE '1' END, \
+                     CASE WHEN EXISTS (SELECT 1 FROM dba_role_privs r WHERE r.grantee = u.username AND r.granted_role = 'DBA') THEN '1' ELSE '0' END, '0', \
+                     CASE WHEN EXISTS (SELECT 1 FROM dba_sys_privs p WHERE p.grantee = u.username AND p.privilege = 'CREATE ROLE') THEN '1' ELSE '0' END, \
+                     CASE WHEN u.account_status LIKE '%LOCKED%' THEN '1' ELSE '0' END, TO_CHAR(u.expiry_date, 'YYYY-MM-DD HH24:MI:SS'), \
+                     (SELECT LISTAGG(r.granted_role, ', ') WITHIN GROUP (ORDER BY r.granted_role) FROM dba_role_privs r WHERE r.grantee = u.username) \
+                     FROM dba_users u WHERE u.oracle_maintained = 'N' ORDER BY u.username";
+                let all = "SELECT username, '', '1', '0', '0', '0', '0', NULL, NULL FROM all_users WHERE oracle_maintained = 'N' ORDER BY username";
+                match self.run_script(dba, 10_000).await {
+                    Ok(r) => r,
+                    Err(_) => self.run_script(all, 10_000).await?,
+                }
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
             Driver::Duckdb => return Err(AppError::msg("DuckDB has no user accounts")),
@@ -144,6 +158,25 @@ impl Session {
                      JOIN sys.database_principals r ON r.principal_id = m.role_principal_id \
                      JOIN sys.database_principals u ON u.principal_id = m.member_principal_id WHERE u.name = {r} OR u.sid = SUSER_SID({r})"
                 )
+            }
+            Driver::Oracle => {
+                let r = d.quote_literal(name);
+                let dba = format!(
+                    "SELECT 'Role ' || granted_role || CASE WHEN admin_option = 'YES' THEN ' (with admin option)' END FROM dba_role_privs WHERE grantee = {r} \
+                     UNION ALL SELECT privilege || CASE WHEN admin_option = 'YES' THEN ' (with admin option)' END FROM dba_sys_privs WHERE grantee = {r} \
+                     UNION ALL SELECT * FROM (SELECT privilege || ' ON ' || owner || '.' || table_name FROM dba_tab_privs WHERE grantee = {r} \
+                       ORDER BY owner, table_name FETCH FIRST 300 ROWS ONLY)"
+                );
+                // Without DBA views, a user can still see their own privileges.
+                let own = "SELECT 'Role ' || granted_role FROM user_role_privs UNION ALL SELECT privilege FROM user_sys_privs \
+                     UNION ALL SELECT * FROM (SELECT privilege || ' ON ' || owner || '.' || table_name FROM user_tab_privs_recd \
+                       ORDER BY owner, table_name FETCH FIRST 300 ROWS ONLY)";
+                let rows = match self.run_script(&dba, 10_000).await {
+                    Ok(r) => r,
+                    Err(_) if self.current_schema().await?.as_deref() == Some(name) => self.run_script(own, 10_000).await?,
+                    Err(_) => return Ok(vec!["Reading another user's privileges needs the SELECT_CATALOG_ROLE role.".into()]),
+                };
+                return Ok(rows.into_iter().next().map(|r| r.rows).unwrap_or_default().into_iter().filter_map(|r| r.into_iter().next().flatten()).collect());
             }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),

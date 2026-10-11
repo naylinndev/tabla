@@ -44,7 +44,7 @@ export function Console({ session, onClose }: { session: Session; onClose(): voi
     };
   }, [session.id]);
 
-  const isMeta = (sql: string) => /information_schema|pg_catalog|pg_class|pg_namespace|pg_attribute|pg_index|sqlite_master|pragma_|duckdb_(tables|views|columns|constraints|indexes|schemas|databases)\(\)|SHOW (server_version|CREATE)|SELECT (VERSION|sqlite_version|current_schema|DATABASE)\(\)/i.test(sql);
+  const isMeta = (sql: string) => /information_schema|pg_catalog|pg_class|pg_namespace|pg_attribute|pg_index|sqlite_master|pragma_|duckdb_(tables|views|columns|constraints|indexes|schemas|databases)\(\)|\b(all|user|dba)_(tab_cols|tables|views|mviews|users|objects|constraints|cons_columns|indexes|ind_columns|triggers|tab_comments|segments|role_privs|sys_privs|tab_privs)\b|SYS_CONTEXT\('USERENV'|SHOW (server_version|CREATE)|SELECT (VERSION|sqlite_version|current_schema|DATABASE)\(\)/i.test(sql);
   const shown = useMemo(
     () => entries.filter((e) => (!hideMeta || !isMeta(e.sql)) && (!q || e.sql.toLowerCase().includes(q.toLowerCase()))),
     [entries, q, hideMeta],

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clickhouse" | "duckdb";
+export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clickhouse" | "duckdb" | "oracle";
 
 /** Engines that open a local file in-process: no host, port, SSH or SSL. */
 export const isLocal = (d: Driver) => d === "sqlite" || d === "duckdb";
@@ -170,6 +170,15 @@ export interface UpdateInfo {
   published: string;
 }
 
+export interface OracleClientStatus {
+  ready: boolean;
+  version: string | null;
+  error: string | null;
+  canInstall: boolean;
+  restartNeeded: boolean;
+  licenseUrl: string;
+}
+
 export interface UserInfo {
   name: string;
   host: string;
@@ -286,6 +295,10 @@ export const api = {
   pickCsvFile: () => invoke<{ name: string; contents: string } | null>("pick_csv_file"),
   pickSqliteFile: () => invoke<string | null>("pick_sqlite_file"),
   pickDuckdbFile: () => invoke<string | null>("pick_duckdb_file"),
+  oracleClientStatus: () => invoke<OracleClientStatus>("oracle_client_status"),
+  /** Downloads Instant Client; resolves to true when Tabla must restart to load it. */
+  installOracleClient: () => invoke<boolean>("install_oracle_client"),
+  restartApp: () => invoke<void>("restart_app"),
   pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>
     invoke<string | null>("export_file", { defaultName, contents }),

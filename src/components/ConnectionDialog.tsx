@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, Fingerprint, Network, ShieldCheck, Bot, LifeBuoy, BookOpen, CheckCircle2, ChevronDown, FolderOpen, Info, KeyRound, Link2, Lock, ShieldAlert, XCircle, Zap } from "lucide-react";
-import { api, errorMessage, isLocal, type ConnectionConfig, type Driver, type EnvTag, type SshConfig, type SslMode } from "../lib/api";
+import { api, errorMessage, isLocal, type ConnectionConfig, type Driver, type EnvTag, type OracleClientStatus, type SshConfig, type SslMode } from "../lib/api";
+import { formatBytes } from "../lib/format";
 import { newConnection as newConnectionDefaults, useApp } from "../lib/store";
 import { DriverIcon } from "./icons";
 import { PROVIDERS, detectProvider, providerById, type Provider } from "../lib/providers";
@@ -16,7 +17,7 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "production", label: "Production" },
 ];
 type DialogTab = "connection" | "ssh" | "ssl" | "options";
-const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123, duckdb: 0 };
+const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123, duckdb: 0, oracle: 1521 };
 
 /** clickhouse://, ch:// and ClickHouse Cloud https:// URLs. Native ports map to the HTTP ones. */
 function parseClickhouse(u: URL, scheme: string): Partial<ConnectionConfig> {
@@ -91,6 +92,7 @@ export function parseMssql(raw: string): Partial<ConnectionConfig> | null {
 
 /** Parses postgres://, mysql://, sqlite://, duckdb:, redis:// and SQL Server connection strings into form fields. */
 export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
+  if (/^(jdbc:oracle:|oracle:)/i.test(raw.trim())) return parseOracle(raw);
   const duck = raw.trim().match(/^duckdb:(?:\/\/)?(.+)$/i);
   if (duck) return { driver: "duckdb", database: decodeURIComponent(duck[1]), host: "", port: 0 };
   if (/^(jdbc:)?(sqlserver|mssql):\/\//i.test(raw.trim()) || /(^|;)\s*(server|data source)\s*=/i.test(raw)) return parseMssql(raw);
@@ -141,6 +143,104 @@ export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * jdbc:oracle:thin:@//host:port/service, jdbc:oracle:thin:@host:port:SID and
+ * oracle://user:pass@host:port/service. A SID becomes a connect descriptor.
+ */
+function parseOracle(raw: string): Partial<ConnectionConfig> | null {
+  const jdbc = /^jdbc:oracle:thin:(?:([^/@]*)\/([^@]*))?@(.*)$/i.exec(raw.trim());
+  if (jdbc) {
+    const [, user, password, rest] = jdbc;
+    const base = { driver: "oracle" as const, user: user ?? "", password: password || undefined, sslMode: "disable" as SslMode };
+    if (rest.startsWith("(")) return { ...base, host: "", port: 1521, database: rest };
+    const svc = /^(?:\/\/)?([^:/]+)(?::(\d+))?\/(.+)$/.exec(rest);
+    if (svc) return { ...base, host: svc[1], port: svc[2] ? +svc[2] : 1521, database: svc[3] };
+    const sid = /^([^:/]+):(\d+):(.+)$/.exec(rest);
+    if (sid)
+      return { ...base, host: sid[1], port: +sid[2], database: `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${sid[1]})(PORT=${sid[2]}))(CONNECT_DATA=(SID=${sid[3]})))` };
+    return null;
+  }
+  try {
+    const u = new URL(raw.trim());
+    if (!/^oracle:$/i.test(u.protocol)) return null;
+    return {
+      driver: "oracle",
+      host: decodeURIComponent(u.hostname),
+      port: u.port ? +u.port : 1521,
+      user: decodeURIComponent(u.username),
+      password: u.password ? decodeURIComponent(u.password) : undefined,
+      database: decodeURIComponent(u.pathname.replace(/^\//, "")),
+      sslMode: "disable",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Oracle connections load Oracle Instant Client; Tabla can install it from oracle.com. */
+function OracleClientCard() {
+  const toast = useApp((s) => s.toast);
+  const [status, setStatus] = useState<OracleClientStatus | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
+  const [restart, setRestart] = useState(false);
+  useEffect(() => {
+    api.oracleClientStatus().then(setStatus, () => setStatus(null));
+  }, []);
+  if (!status) return null;
+  if (status.ready)
+    return (
+      <span className="hint">
+        <CheckCircle2 /> Oracle Instant Client {status.version}
+      </span>
+    );
+  const install = async () => {
+    setInstalling(true);
+    let unlisten: (() => void) | undefined;
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<{ downloaded: number; total: number | null }>("oracle-client-progress", (e) => setProgress(e.payload));
+    } catch {
+      // Progress is optional.
+    }
+    try {
+      if (await api.installOracleClient()) setRestart(true);
+      else setStatus(await api.oracleClientStatus());
+    } catch (e) {
+      toast(errorMessage(e), "error");
+    } finally {
+      unlisten?.();
+      setInstalling(false);
+    }
+  };
+  const pct = progress?.total ? Math.round((progress.downloaded / progress.total) * 100) : null;
+  return (
+    <div className="card oracle-client">
+      <b>Oracle Instant Client is needed</b>
+      <span className="dim">
+        Tabla talks to Oracle through Oracle's own free client library.
+        {status.canInstall ? " It isn't installed yet; Tabla can download it from oracle.com for you." : " Install Instant Client Basic Light from oracle.com and add it to your library path."}
+      </span>
+      {restart || status.restartNeeded ? (
+        <button type="button" className="btn primary" onClick={() => api.restartApp()}>
+          Restart Tabla to finish
+        </button>
+      ) : status.canInstall ? (
+        <div className="url-row">
+          <button type="button" className="btn primary" onClick={install} disabled={installing}>
+            {installing ? <span className="spinner" /> : null}
+            {installing ? (pct !== null ? `Downloading… ${pct}%` : progress ? `Downloading… ${formatBytes(progress.downloaded)}` : "Starting…") : "Install Instant Client (about 40 MB)"}
+          </button>
+          <button type="button" className="btn ghost" onClick={() => api.openProjectPage(status.licenseUrl).catch((e) => toast(errorMessage(e), "error"))}>
+            Oracle's license
+          </button>
+        </div>
+      ) : null}
+      {status.canInstall && !restart && !status.restartNeeded && <small className="dim">Downloading means you accept Oracle's Instant Client license terms.</small>}
+    </div>
+  );
 }
 
 export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
@@ -370,14 +470,14 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           <div className="field">
             <label>Engine</label>
             <div className="segmented" style={{ alignSelf: "flex-start" }}>
-              {(["postgres", "mysql", "mssql"] as Driver[]).map((d) => (
+              {(["postgres", "mysql", "mssql", "oracle"] as Driver[]).map((d) => (
                 <button
                   type="button"
                   key={d}
                   className={f.driver === d ? "on" : ""}
                   onClick={() => setF((x) => ({ ...x, driver: d, port: DEFAULT_PORT[d] }))}
                 >
-                  {d === "postgres" ? "PostgreSQL / Aurora PostgreSQL" : d === "mysql" ? "MySQL / Aurora MySQL" : "SQL Server"}
+                  {d === "postgres" ? "PostgreSQL / Aurora PostgreSQL" : d === "mysql" ? "MySQL / Aurora MySQL" : d === "oracle" ? "Oracle" : "SQL Server"}
                 </button>
               ))}
             </div>
@@ -403,6 +503,8 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
             </span>
           </div>
         )}
+
+        {f.driver === "oracle" && <OracleClientCard />}
 
         <div className="field">
           <label>Name</label>
@@ -481,7 +583,15 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
               </div>
             </div>
             <div className="field">
-                <label>{f.driver === "mysql" || f.driver === "clickhouse" ? "Database (optional)" : f.driver === "redis" ? "Database index (0–15)" : "Database"}</label>
+                <label>
+                  {f.driver === "mysql" || f.driver === "clickhouse"
+                    ? "Database (optional)"
+                    : f.driver === "redis"
+                      ? "Database index (0–15)"
+                      : f.driver === "oracle"
+                        ? "Service name (or TNS descriptor)"
+                        : "Database"}
+                </label>
                 <input
                   className="input mono"
                   placeholder={provider.database ?? ""}
@@ -646,6 +756,8 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
             )
               // SQL Server negotiates TLS inside TDS and has no client certificates.
               .filter(([k]) => f.driver !== "mssql" || k === "sslCa")
+              // Oracle reads certificates from wallets and the system store, not PEM files.
+              .filter(() => f.driver !== "oracle")
               .map(([k, label, hint]) => (
               <div className="field" key={k}>
                 <label>{label}</label>
@@ -676,6 +788,11 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
             {f.driver === "clickhouse" && (
               <p className="hint">
                 <Info /> Any mode except Disable uses HTTPS. Prefer and Require skip the certificate check; Verify checks it.
+              </p>
+            )}
+            {f.driver === "oracle" && (
+              <p className="hint">
+                <Info /> Any mode except Disable connects with TCPS (usually port 2484), checking the server against your system's trusted certificates. Verify also matches the host name.
               </p>
             )}
             {f.driver === "mssql" && (

@@ -661,6 +661,22 @@ html:not(.mac) .titlebar-space {
 .sb-foot .btn {
   flex: 1;
   justify-content: center;
+  /* Shrinks (dropping the shortcut hint) so the icon buttons always fit. */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.sb-foot .icon-btn {
+  flex: none;
+}
+.sb-foot {
+  container-type: inline-size;
+}
+/* Not enough room for the shortcut hint next to three icon buttons. */
+@container (max-width: 300px) {
+  .sb-foot .btn .kbd {
+    display: none;
+  }
 }
 .sb-empty {
   padding: 24px 12px;
@@ -4152,4 +4168,36 @@ pre.grants {
 .update-brew code {
   font-family: var(--font-mono);
   font-size: 11.5px;
+}
+
+/* Oracle Instant Client prompt in the connection dialog */
+.card.oracle-client {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  font-size: 13px;
+}
+.card.oracle-client .btn {
+  align-self: flex-start;
+}
+
+/* Length cell with the rest of a type, e.g. TIMESTAMP(6) WITH TIME ZONE */
+.sg-len {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.sg-len .sg-in {
+  min-width: 2.5em;
+}
+.sg-len small {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11px;
 }

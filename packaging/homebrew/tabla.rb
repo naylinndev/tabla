@@ -9,7 +9,7 @@ cask "tabla" do
 
   url "https://github.com/naylinndev/tabla/releases/download/v#{version}/Tabla_#{version}_#{arch}.dmg"
   name "Tabla"
-  desc "Free, open-source database client for PostgreSQL, MySQL and SQLite"
+  desc "Free, open-source database client for PostgreSQL, MySQL, Oracle, SQLite and more"
   homepage "https://github.com/naylinndev/tabla"
 
   depends_on macos: ">= :big_sur"

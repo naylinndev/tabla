@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // Must run before anything else: it may restart the process (Linux only).
+    tabla_lib::prepare_process();
     match std::env::args().nth(1).as_deref() {
         // Headless MCP server for AI assistants.
         Some("mcp") => tabla_lib::run_mcp(),

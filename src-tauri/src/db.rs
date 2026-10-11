@@ -31,6 +31,7 @@ pub enum Pool {
     Ms(crate::mssql::MsPool),
     Ch(crate::clickhouse::ChClient),
     Duck(crate::duck::DuckDb),
+    Ora(crate::ora::OraPool),
 }
 
 /// One statement Tabla sent to the server (Console view). Memory only.
@@ -56,6 +57,7 @@ enum Cancel {
     Ms(String),
     Ch(String),
     Duck(std::sync::Arc<duckdb::InterruptHandle>),
+    Ora(std::sync::Arc<oracle::Connection>),
 }
 
 pub struct Session {
@@ -358,6 +360,7 @@ impl Session {
             Driver::Clickhouse => Pool::Ch(crate::clickhouse::ChClient::connect(cfg, host, port, password.clone()).await?),
             Driver::Mssql => Pool::Ms(crate::mssql::MsPool::connect(crate::mssql::build_config(cfg, host, port, db_host, password.clone())).await?),
             Driver::Duckdb => Pool::Duck(crate::duck::DuckDb::open(&cfg.database, cfg.read_only).await?),
+            Driver::Oracle => Pool::Ora(crate::ora::OraPool::connect(cfg, host, port, password.clone()).await?),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 if cfg.database.trim().is_empty() {
@@ -380,7 +383,7 @@ impl Session {
             Pool::My(p) => p.close().await,
             Pool::Lite(p) => p.close().await,
             Pool::Ms(p) => p.close().await,
-            Pool::Ch(_) | Pool::Duck(_) => {}
+            Pool::Ch(_) | Pool::Duck(_) | Pool::Ora(_) => {}
         }
     }
 
@@ -446,6 +449,7 @@ impl Session {
             }
             Pool::Ch(c) => c.run(sql, max_rows, None, &[]).await?,
             Pool::Duck(dk) => dk.run(sql, max_rows, None, |_| {}).await?,
+            Pool::Ora(o) => o.run(sql, max_rows, self.read_only, None, |_| {}).await?,
         };
 
         // A SELECT with zero rows carries no column metadata; ask the server.
@@ -514,6 +518,13 @@ impl Session {
                     self.running.lock().unwrap().remove(query_id);
                     out?
                 }
+                Pool::Ora(o) => {
+                    let out = o.run(sql, max_rows, self.read_only, progress, |h| {
+                        self.running.lock().unwrap().insert(query_id.into(), Cancel::Ora(h));
+                    }).await;
+                    self.running.lock().unwrap().remove(query_id);
+                    out?
+                }
                 // SQLite runs in-process; queries are local and cannot be interrupted from here.
                 Pool::Lite(p) => collect_with(raw().fetch_many(p), max_rows, |q| q.rows_affected(), lite_cell, progress).await?,
             })
@@ -521,7 +532,7 @@ impl Session {
         .await;
         let mut res = res.map_err(|e| {
             let m = e.to_string().to_lowercase();
-            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") || m.contains("(query_was_cancelled)") || m.contains("interrupt") {
+            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") || m.contains("(query_was_cancelled)") || m.contains("interrupt") || m.contains("ora-01013") {
                 AppError::msg("Query cancelled")
             } else {
                 e
@@ -547,6 +558,15 @@ impl Session {
 
     /// Asks the server to stop a running query. Returns false if it already finished.
     pub async fn cancel(&self, query_id: &str) -> AppResult<bool> {
+        // Oracle: a break on the query's own connection; it stops with ORA-01013.
+        let ora = match self.running.lock().unwrap().get(query_id) {
+            Some(Cancel::Ora(c)) => Some(c.clone()),
+            _ => None,
+        };
+        if let Some(c) = ora {
+            tokio::task::spawn_blocking(move || c.break_execution()).await.map_err(|e| AppError::msg(e.to_string()))?.map_err(crate::ora::err)?;
+            return Ok(true);
+        }
         let handle = {
             let mut running = self.running.lock().unwrap();
             match running.get(query_id) {
@@ -565,6 +585,8 @@ impl Session {
                     h.interrupt();
                     return Ok(true);
                 }
+                // Handled above.
+                Some(Cancel::Ora(_)) => None,
                 None => None,
             }
         };
@@ -576,7 +598,7 @@ impl Session {
             Pool::My(p) => {
                 p.execute(AssertSqlSafe(sql)).await?;
             }
-            Pool::Lite(_) | Pool::Duck(_) => return Ok(false),
+            Pool::Lite(_) | Pool::Duck(_) | Pool::Ora(_) => return Ok(false),
             Pool::Ms(p) => {
                 let mut conn = p.acquire().await?;
                 crate::mssql::run(&mut conn, &sql, 0, None).await?;
@@ -600,9 +622,19 @@ impl Session {
             Pool::My(p) => meta(p.describe(s).await.ok()?.columns()),
             Pool::Lite(p) => meta(p.describe(s).await.ok()?.columns()),
             // SQL Server sends column metadata even for empty results.
-            Pool::Ms(_) | Pool::Ch(_) | Pool::Duck(_) => return None,
+            Pool::Ms(_) | Pool::Ch(_) | Pool::Duck(_) | Pool::Ora(_) => return None,
         };
         (!cols.is_empty()).then_some(cols)
+    }
+
+    /// A catalog query. On Oracle, `:s` and `:t` are bound to the schema and
+    /// table, so each query is parsed once and shared by every table.
+    pub(crate) async fn cat_rows(&self, sql: &str, schema: &str, table: &str) -> AppResult<Vec<Vec<Option<String>>>> {
+        let Pool::Ora(o) = &self.pool else { return self.text_rows(sql).await };
+        let started = std::time::Instant::now();
+        let res = Box::pin(o.query_named(sql, vec![("s", schema.to_string()), ("t", table.to_string())])).await;
+        self.record(sql, started, res.as_ref().map(|r| format!("{} rows", r.rows.len())).map_err(|e| e.to_string()));
+        Ok(res?.rows)
     }
 
     async fn text_rows(&self, sql: &str) -> AppResult<Vec<Vec<Option<String>>>> {
@@ -610,10 +642,14 @@ impl Session {
     }
 
     pub async fn server_version(&self) -> AppResult<String> {
+        if let Pool::Ora(o) = &self.pool {
+            return o.server_version().await;
+        }
         let sql = match self.driver {
             Driver::Postgres => "SHOW server_version",
             Driver::Mysql => "SELECT VERSION()",
             Driver::Clickhouse | Driver::Duckdb => "SELECT version()",
+            Driver::Oracle => unreachable!("handled above"),
             Driver::Mssql => "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)) + N' ' + CAST(SERVERPROPERTY('Edition') AS nvarchar(128))",
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT sqlite_version()",
@@ -644,6 +680,12 @@ impl Session {
                 "SELECT schema_name FROM duckdb_schemas() WHERE database_name = current_database() \
                  AND schema_name NOT IN ('information_schema', 'pg_catalog') ORDER BY schema_name = 'main' DESC, schema_name"
             }
+            // Users that own objects, plus the current schema even when it's empty.
+            Driver::Oracle => {
+                "SELECT username FROM all_users u WHERE username = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') \
+                 OR (oracle_maintained = 'N' AND EXISTS (SELECT 1 FROM all_objects o WHERE o.owner = u.username)) \
+                 ORDER BY CASE WHEN username = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') THEN 0 ELSE 1 END, username"
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT name FROM pragma_database_list ORDER BY seq",
         };
@@ -653,6 +695,7 @@ impl Session {
     pub async fn current_schema(&self) -> AppResult<Option<String>> {
         let sql = match self.driver {
             Driver::Postgres | Driver::Duckdb => "SELECT current_schema()",
+            Driver::Oracle => "SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') FROM dual",
             Driver::Mysql => "SELECT DATABASE()",
             Driver::Mssql => "SELECT SCHEMA_NAME()",
             Driver::Clickhouse => "SELECT currentDatabase()",
@@ -683,6 +726,13 @@ impl Session {
                 "SELECT o.name, RTRIM(o.type), (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
                  FROM sys.objects o WHERE o.schema_id = SCHEMA_ID({lit}) AND o.type IN ('U', 'V') ORDER BY o.name"
             ),
+            Driver::Oracle => format!(
+                "SELECT table_name, 'table', num_rows FROM all_tables t WHERE owner = :s AND nested = 'NO' AND secondary = 'N' \
+                 AND dropped = 'NO' AND (iot_type IS NULL OR iot_type = 'IOT') \
+                 AND NOT EXISTS (SELECT 1 FROM all_mviews m WHERE m.owner = t.owner AND m.mview_name = t.table_name) \
+                 UNION ALL SELECT view_name, 'view', NULL FROM all_views WHERE owner = :s \
+                 UNION ALL SELECT mview_name, 'm', NULL FROM all_mviews WHERE owner = :s ORDER BY 1"
+            ),
             Driver::Duckdb => format!(
                 "SELECT table_name, 'table', estimated_size FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = {lit} \
                  UNION ALL SELECT view_name, 'view', NULL FROM duckdb_views() WHERE database_name = current_database() AND schema_name = {lit} \
@@ -695,7 +745,7 @@ impl Session {
                 d.quote_ident(schema)
             ),
         };
-        let rows = self.text_rows(&sql).await?;
+        let rows = self.cat_rows(&sql, schema, "").await?;
         Ok(rows
             .into_iter()
             .filter_map(|r| {
@@ -715,6 +765,9 @@ impl Session {
     }
 
     pub async fn table_structure(&self, schema: &str, table: &str) -> AppResult<TableStructure> {
+        if self.driver == Driver::Oracle {
+            return Box::pin(self.ora_structure(schema, table)).await;
+        }
         let d = self.driver;
         let (s, t) = (d.quote_literal(schema), d.quote_literal(table));
         let columns: Vec<ColumnInfo> = match d {
@@ -788,6 +841,7 @@ impl Session {
                     })
                     .collect()
             }
+            Driver::Oracle => unreachable!("handled by ora_structure"),
             Driver::Duckdb => {
                 let sql = format!(
                     "SELECT c.column_name, c.data_type, CASE WHEN c.is_nullable THEN '1' ELSE '0' END, c.column_default, \
@@ -846,6 +900,7 @@ impl Session {
                  WHERE i.object_id = OBJECT_ID({}) AND i.type > 0 ORDER BY i.is_primary_key DESC, i.name",
                 d.quote_literal(&d.qualified(schema, table))
             ),
+            Driver::Oracle => unreachable!("handled by ora_structure"),
             // Primary key and unique constraints are enforced by implicit indexes
             // that duckdb_indexes() leaves out, so list them from the constraints.
             Driver::Duckdb => format!(
@@ -869,7 +924,7 @@ impl Session {
         };
         let truthy = |v: Option<String>| matches!(v.as_deref(), Some("t" | "1" | "true"));
         let indexes = self
-            .text_rows(&index_sql)
+            .cat_rows(&index_sql, schema, table)
             .await?
             .into_iter()
             .filter_map(|r| {
@@ -915,6 +970,7 @@ impl Session {
                  FROM sys.columns c JOIN sys.objects o ON o.object_id = c.object_id JOIN sys.types t ON t.user_type_id = c.user_type_id \
                  WHERE o.schema_id = SCHEMA_ID({s}) AND o.type IN ('U', 'V') ORDER BY o.name, c.column_id"
             )),
+            Driver::Oracle => None,
             Driver::Duckdb => Some(format!(
                 "SELECT c.table_name, c.column_name, c.data_type, CASE WHEN {DUCK_PK} THEN '1' ELSE '0' END \
                  FROM duckdb_columns() c WHERE c.database_name = current_database() AND c.schema_name = {s} \
@@ -925,7 +981,7 @@ impl Session {
         };
         match col_sql {
             Some(sql) => {
-                for r in self.text_rows(&sql).await? {
+                for r in self.cat_rows(&sql, schema, "").await? {
                     let mut it = r.into_iter();
                     let mut n = || it.next().flatten();
                     let (Some(t), Some(c)) = (n(), n()) else { continue };
@@ -934,6 +990,7 @@ impl Session {
                     by_table.entry(t).or_default().push(GraphColumn { name: c, data_type: ty, primary_key: pk });
                 }
             }
+            None if d == Driver::Oracle => by_table = Box::pin(self.ora_graph_columns(schema)).await?,
             None => {
                 for t in &tables {
                     let st = self.table_structure(schema, &t.name).await?;
@@ -971,9 +1028,10 @@ impl Session {
             Driver::Mysql => format!("{MY_FK_BASE} AND k.TABLE_SCHEMA = {s} {MY_FK_GROUP} ORDER BY 3, 1"),
             Driver::Mssql => format!("{MS_FK_BASE} AND fk.schema_id = SCHEMA_ID({s}) ORDER BY 3, 1"),
             Driver::Duckdb => format!("{DUCK_FK_BASE} AND k.schema_name = {s} ORDER BY 3, 1"),
+            Driver::Oracle => return Box::pin(self.ora_foreign_keys(schema, "")).await,
             _ => return Ok(vec![]),
         };
-        Ok(parse_fks(self.text_rows(&sql).await?, d == Driver::Postgres))
+        Ok(parse_fks(self.cat_rows(&sql, schema, "").await?, d == Driver::Postgres))
     }
 
     pub async fn table_relations(&self, schema: &str, table: &str) -> AppResult<TableRelations> {
@@ -1000,6 +1058,13 @@ impl Session {
             }
             // ClickHouse has no foreign keys or triggers.
             Driver::Clickhouse => return Ok(TableRelations { outgoing: vec![], incoming: vec![], triggers: vec![] }),
+            Driver::Oracle => {
+                return Ok(TableRelations {
+                    outgoing: Box::pin(self.ora_foreign_keys(schema, table)).await?,
+                    incoming: Box::pin(self.ora_incoming(schema, table)).await?,
+                    triggers: Box::pin(self.ora_triggers(schema, table)).await?,
+                });
+            }
             // DuckDB has foreign keys but no triggers.
             Driver::Duckdb => {
                 return Ok(TableRelations {
@@ -1054,7 +1119,7 @@ impl Session {
                    '` FOR EACH ROW ', ACTION_STATEMENT) \
                  FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = {s} AND EVENT_OBJECT_TABLE = {t} ORDER BY ACTION_ORDER"
             ),
-            Driver::Clickhouse | Driver::Duckdb => unreachable!("returned above"),
+            Driver::Clickhouse | Driver::Duckdb | Driver::Oracle => unreachable!("returned above"),
             Driver::Mssql => format!(
                 "SELECT tr.name, CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END, \
                  (SELECT STRING_AGG(te.type_desc, ', ') FROM sys.trigger_events te WHERE te.object_id = tr.object_id), \
@@ -1292,6 +1357,54 @@ impl Session {
                 });
                 out.stats.extend(stat("Database file", Some(file.unwrap_or_else(|| "in memory".into())), "text"));
             }
+            Driver::Oracle => {
+                let r = first(
+                    self.cat_rows(
+                        "SELECT o.object_type, t.num_rows, t.tablespace_name, TO_CHAR(o.created, 'YYYY-MM-DD HH24:MI:SS'), \
+                         TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), TO_CHAR(t.last_analyzed, 'YYYY-MM-DD HH24:MI:SS'), \
+                         t.avg_row_len, t.partitioned, t.compression, t.logging \
+                         FROM all_objects o LEFT JOIN all_tables t ON t.owner = o.owner AND t.table_name = o.object_name \
+                         WHERE o.owner = :s AND o.object_name = :t AND o.object_type IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW') \
+                         ORDER BY CASE o.object_type WHEN 'MATERIALIZED VIEW' THEN 0 WHEN 'TABLE' THEN 1 ELSE 2 END",
+                        schema,
+                        table,
+                    )
+                    .await?,
+                );
+                let mut it = r.into_iter();
+                let mut v = || it.next().flatten();
+                let kind = v().unwrap_or_else(|| "TABLE".into());
+                out.rows_estimate = num(v());
+                out.engine = Some(v().map(|ts| format!("Oracle ({ts})")).unwrap_or_else(|| "Oracle".into()));
+                out.created = v();
+                out.updated = v();
+                out.stats = [
+                    stat("Last analyzed", v(), "text"),
+                    stat("Avg. row length", v(), "bytes"),
+                    stat("Partitioned", v(), "text"),
+                    stat("Compression", v(), "text"),
+                    stat("Logging", v(), "text"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                let one = |rows: Vec<Vec<Option<String>>>| first(rows).into_iter().next().flatten();
+                out.comment = one(self.cat_rows("SELECT comments FROM all_tab_comments WHERE owner = :s AND table_name = :t", schema, table).await?);
+                // Segment sizes are only visible for the user's own schema without DBA rights.
+                if self.current_schema().await?.as_deref() == Some(schema) {
+                    let sql = "SELECT SUM(bytes) FROM user_segments WHERE segment_name = :t \
+                         OR segment_name IN (SELECT index_name FROM user_indexes WHERE table_name = :t)";
+                    out.total_bytes = num(one(self.cat_rows(sql, schema, table).await?));
+                }
+                // Rebuilt from the dictionary: DBMS_METADATA is exact but can take many seconds.
+                out.ddl = match kind.as_str() {
+                    "VIEW" => one(self.cat_rows("SELECT text_vc FROM all_views WHERE owner = :s AND view_name = :t", schema, table).await?)
+                        .map(|q| format!("CREATE OR REPLACE VIEW {} AS\n{}", d.qualified(schema, table), q.trim())),
+                    "MATERIALIZED VIEW" => one(self.cat_rows("SELECT query FROM all_mviews WHERE owner = :s AND mview_name = :t", schema, table).await?)
+                        .map(|q| format!("CREATE MATERIALIZED VIEW {} AS\n{}", d.qualified(schema, table), q.trim())),
+                    _ => Some(Box::pin(self.pg_ddl(schema, table)).await?),
+                };
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let q = d.quote_ident(schema);
@@ -1319,10 +1432,17 @@ impl Session {
                 if d == Driver::Mssql && c.extra == "identity" {
                     l.push_str(" IDENTITY(1,1)");
                 }
+                if d == Driver::Oracle && c.extra == "identity" {
+                    l.push_str(" GENERATED BY DEFAULT AS IDENTITY");
+                }
+                // Oracle wants DEFAULT before the NOT NULL constraint.
+                if let Some(def) = c.default_value.as_ref().filter(|_| d == Driver::Oracle) {
+                    l.push_str(&format!(" DEFAULT {def}"));
+                }
                 if !c.nullable {
                     l.push_str(" NOT NULL");
                 }
-                if let Some(def) = &c.default_value {
+                if let Some(def) = c.default_value.as_ref().filter(|_| d != Driver::Oracle) {
                     l.push_str(&format!(" DEFAULT {def}"));
                 }
                 l
@@ -1371,7 +1491,7 @@ impl Session {
                 }
             }
         };
-        let sql = if d == Driver::Mssql {
+        let sql = if d == Driver::Mssql || d == Driver::Oracle {
             format!("SELECT * FROM {from}{where_sql}{order_sql} OFFSET {} ROWS FETCH NEXT {} ROWS ONLY", a.offset, a.limit)
         } else {
             format!("SELECT * FROM {from}{where_sql}{order_sql} LIMIT {} OFFSET {}", a.limit, a.offset)
@@ -1425,6 +1545,7 @@ impl Session {
             // The server enforces read-only mode and the time limit.
             Pool::Ch(c) => vec![c.query(sql, max_rows, None, &[("readonly", "2".into()), ("max_execution_time", "15".into())]).await?],
             Pool::Duck(dk) => vec![dk.run_readonly(sql, max_rows).await?],
+            Pool::Ora(o) => vec![o.run_readonly(sql, max_rows).await?],
             // SQL Server has no read-only transactions: the statement is
             // validated by ai_guard, then run in a transaction that is
             // always rolled back, with a client-side timeout.
@@ -1490,7 +1611,7 @@ impl Session {
         let from = d.qualified(schema, table);
 
         // Postgres needs explicit casts because parameters are bound as text.
-        let types: HashMap<String, String> = if matches!(d, Driver::Postgres | Driver::Clickhouse | Driver::Duckdb) {
+        let types: HashMap<String, String> = if matches!(d, Driver::Postgres | Driver::Clickhouse | Driver::Duckdb | Driver::Oracle) {
             self.table_structure(schema, table).await?.columns.into_iter().map(|c| (c.name, c.data_type)).collect()
         } else {
             HashMap::new()
@@ -1523,6 +1644,11 @@ impl Session {
                     let sql = if values.is_empty() {
                         match d {
                             Driver::Mysql => format!("INSERT INTO {from} () VALUES ()"),
+                            // Oracle has no DEFAULT VALUES; default the first column explicitly.
+                            Driver::Oracle => match self.table_structure(schema, table).await?.columns.first() {
+                                Some(c) => format!("INSERT INTO {from} ({}) VALUES (DEFAULT)", d.quote_ident(&c.name)),
+                                None => return Err(AppError::msg("This table has no columns")),
+                            },
                             _ => format!("INSERT INTO {from} DEFAULT VALUES"),
                         }
                     } else {
@@ -1576,6 +1702,19 @@ impl Session {
             Pool::Lite(p) => exec_tx!(p),
             Pool::Ms(p) => self.ms_exec_tx(p, stmts).await?,
             Pool::Ch(c) => self.ch_exec(c, &from, stmts).await?,
+            Pool::Ora(o) => {
+                let (res, log) = o
+                    .with_conn(move |c| {
+                        let mut log = Vec::new();
+                        let res = crate::ora::exec_tx(c.get(), &stmts, &mut log);
+                        Ok((res, log))
+                    })
+                    .await?;
+                for (sql, started, outcome) in log {
+                    self.record(&sql, started, outcome);
+                }
+                res?
+            }
             Pool::Duck(dk) => {
                 let (res, log) = dk.exec_tx(stmts).await?;
                 for (sql, started, outcome) in log {
@@ -1745,6 +1884,16 @@ impl Placeholders<'_> {
                 format!("CAST(CAST(${} AS text) AS {ty})", self.n)
             }
             Driver::Mssql => format!("@P{}", self.n),
+            // Text binds convert implicitly (dates use the session's ISO formats);
+            // binary columns take the hex shown in the grid.
+            Driver::Oracle => {
+                let ty = self.types.get(col).map(String::as_str).unwrap_or("");
+                if ty.starts_with("RAW") || ty == "BLOB" || ty == "LONG RAW" {
+                    format!("HEXTORAW(REGEXP_REPLACE(:{}, '^0x', ''))", self.n)
+                } else {
+                    format!(":{}", self.n)
+                }
+            }
             Driver::Duckdb => {
                 let ty = self.types.get(col).map(String::as_str).unwrap_or("VARCHAR");
                 format!("CAST(CAST(? AS VARCHAR) AS {ty})")
@@ -1953,6 +2102,12 @@ pub fn redact_secrets(sql: &str) -> String {
             out.push_str(&rest[..ws]);
             out.push_str("'•••'");
             i = after + ws + 1 + (j + 1).min(body.len());
+        } else if let Some(body) = trimmed.strip_prefix('"') {
+            // Oracle writes passwords as quoted identifiers: IDENTIFIED BY "…".
+            let j = body.find('"').map(|p| p + 1).unwrap_or(body.len());
+            out.push_str(&rest[..ws]);
+            out.push_str("\"•••\"");
+            i = after + ws + 1 + j;
         } else {
             i = after;
         }
@@ -2191,6 +2346,7 @@ mod redact_tests {
         assert_eq!(redact_secrets("SELECT password FROM t"), "SELECT password FROM t");
         assert_eq!(redact_secrets("CREATE LOGIN [a] WITH PASSWORD = N'x;y'"), "CREATE LOGIN [a] WITH PASSWORD = N'•••'");
         assert_eq!(redact_secrets("ALTER USER [a] WITH PASSWORD=N'z'"), "ALTER USER [a] WITH PASSWORD=N'•••'");
+        assert_eq!(redact_secrets("CREATE USER \"BOB\" IDENTIFIED BY \"s3;cr\" ; SELECT 1"), "CREATE USER \"BOB\" IDENTIFIED BY \"•••\" ; SELECT 1");
     }
 }
 

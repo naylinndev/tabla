@@ -180,6 +180,7 @@ fn list_connections() -> AppResult<String> {
                 config::Driver::Mssql => "SQL Server",
                 config::Driver::Clickhouse => "ClickHouse",
                 config::Driver::Duckdb => "DuckDB",
+                config::Driver::Oracle => "Oracle",
             };
             let provider = if c.provider.is_empty() || c.provider == format!("{:?}", c.driver).to_lowercase() {
                 String::new()

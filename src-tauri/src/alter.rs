@@ -11,6 +11,8 @@
 //!   of the type there (`Nullable(T)`). Statements apply one by one.
 //! - DuckDB: add, drop, rename, retype, nullability and defaults, applied in
 //!   one transaction.
+//! - Oracle: add, drop, rename, retype, nullability and defaults. DDL commits
+//!   implicitly there, so statements apply one by one.
 //! - SQLite: add, rename and drop only (SQLite can't alter a column's type,
 //!   nullability or default in place).
 
@@ -169,6 +171,18 @@ impl Session {
                     }
                     out.push(s);
                 }
+                (None, Some(c)) if d == Driver::Oracle => {
+                    validate(c)?;
+                    let mut s = format!("ALTER TABLE {from} ADD ({} {}", q(&c.name), c.data_type.trim());
+                    if let Some(def) = default_of(c) {
+                        s.push_str(&format!(" DEFAULT {def}"));
+                    }
+                    if !c.nullable {
+                        s.push_str(" NOT NULL");
+                    }
+                    s.push(')');
+                    out.push(s);
+                }
                 (None, Some(c)) => {
                     validate(c)?;
                     // SQL Server's ADD takes no COLUMN keyword.
@@ -280,6 +294,21 @@ impl Session {
                                     Some(def) => format!("ALTER TABLE {from} MODIFY COLUMN {col} DEFAULT {def}"),
                                     None => format!("ALTER TABLE {from} MODIFY COLUMN {col} REMOVE DEFAULT"),
                                 });
+                            }
+                        }
+                        Driver::Oracle => {
+                            if o.name != c.name {
+                                out.push(format!("ALTER TABLE {from} RENAME COLUMN {} TO {}", q(&o.name), q(&c.name)));
+                            }
+                            let col = q(&c.name);
+                            if o.data_type.trim() != c.data_type.trim() {
+                                out.push(format!("ALTER TABLE {from} MODIFY ({col} {})", c.data_type.trim()));
+                            }
+                            if default_of(o) != default_of(c) {
+                                out.push(format!("ALTER TABLE {from} MODIFY ({col} DEFAULT {})", default_of(c).unwrap_or("NULL")));
+                            }
+                            if o.nullable != c.nullable {
+                                out.push(format!("ALTER TABLE {from} MODIFY ({col} {})", if c.nullable { "NULL" } else { "NOT NULL" }));
                             }
                         }
                         Driver::Redis => return Err(crate::error::not_sql()),
@@ -397,6 +426,18 @@ impl Session {
                 }
                 if let Some(e) = failed {
                     return Err(e);
+                }
+            }
+            // Oracle commits each DDL statement implicitly too.
+            Pool::Ora(_) => {
+                for (i, s) in stmts.iter().enumerate() {
+                    if let Err(e) = self.run_script(s, 0).await {
+                        return Err(AppError::msg(format!(
+                            "{e} (statement {} of {}; the {i} before it were applied, because Oracle can't roll back structure changes)",
+                            i + 1,
+                            stmts.len()
+                        )));
+                    }
                 }
             }
             // MySQL commits each DDL statement implicitly.

@@ -28,6 +28,7 @@ const TYPES: Record<string, string[]> = {
   sqlite: ["TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"],
   clickhouse: ["String", "UInt8", "UInt16", "UInt32", "UInt64", "Int8", "Int16", "Int32", "Int64", "Float32", "Float64", "Decimal", "Bool", "Date", "Date32", "DateTime", "DateTime64", "UUID", "IPv4", "IPv6", "Array(String)", "LowCardinality(String)", "Map(String, String)", "JSON", "FixedString"],
   duckdb: ["VARCHAR", "INTEGER", "BIGINT", "SMALLINT", "TINYINT", "HUGEINT", "UBIGINT", "DOUBLE", "FLOAT", "DECIMAL", "BOOLEAN", "DATE", "TIME", "TIMESTAMP", "TIMESTAMPTZ", "INTERVAL", "UUID", "JSON", "BLOB", "VARCHAR[]", "INTEGER[]", "MAP(VARCHAR, VARCHAR)"],
+  oracle: ["VARCHAR2", "NVARCHAR2", "CHAR", "NUMBER", "INTEGER", "FLOAT", "BINARY_FLOAT", "BINARY_DOUBLE", "BOOLEAN", "DATE", "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "TIMESTAMP WITH LOCAL TIME ZONE", "INTERVAL DAY TO SECOND", "CLOB", "NCLOB", "BLOB", "RAW", "JSON", "VECTOR", "XMLTYPE"],
   mssql: ["int", "bigint", "smallint", "tinyint", "bit", "decimal", "numeric", "money", "float", "real", "nvarchar", "varchar", "nchar", "char", "date", "time", "datetime2", "datetimeoffset", "datetime", "uniqueidentifier", "varbinary", "xml"],
 };
 
@@ -258,7 +259,11 @@ export function StructureEditor({
                   autoFocus={!d.original && !d.name}
                 />
                 <Combobox className="sg-combo" value={t.base} suggestions={TYPES[driver]} disabled={off} onChange={(v) => setType({ base: v })} />
-                <input className="sg-in mono" value={t.len} disabled={off} onChange={(e) => setType({ len: e.target.value })} spellCheck={false} />
+                <span className="sg-len">
+                  <input className="sg-in mono" value={t.len} disabled={off} onChange={(e) => setType({ len: e.target.value })} spellCheck={false} />
+                  {/* The rest of the type, e.g. WITH TIME ZONE; kept as is when saving. */}
+                  {t.rest && <small className="dim mono" title={d.dataType}>{t.rest}</small>}
+                </span>
                 {mysql && (
                   <span className="c">
                     <Checkbox checked={t.unsigned} disabled={off} onChange={(v) => setType({ unsigned: v })} />
@@ -299,7 +304,7 @@ export function StructureEditor({
           <span className="sg-count">
             {drafts.filter((d) => !d.dropped).length} columns
             {!mysql && editable && (
-              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : driver === "clickhouse" ? "ClickHouse" : driver === "duckdb" ? "DuckDB" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
+              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : driver === "clickhouse" ? "ClickHouse" : driver === "duckdb" ? "DuckDB" : driver === "oracle" ? "Oracle" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
                 {" "}
                 · <Info size={11} style={{ verticalAlign: -1 }} /> drag sets view order
               </span>
@@ -468,10 +473,12 @@ function AddIndexDialog({
   const [picked, setPicked] = useState<string[]>([]);
   const [unique, setUnique] = useState(false);
   const [name, setName] = useState("");
-  const idxName = name.trim() || `${unique ? "uq" : "idx"}_${table}_${picked.join("_")}`.slice(0, 60);
+  const auto = `${unique ? "uq" : "idx"}_${table}_${picked.join("_")}`.slice(0, d === "oracle" ? 128 : 60);
+  const idxName = name.trim() || (d === "oracle" ? auto.toUpperCase() : auto);
   const q = (x: string) => quoteIdent(d, x);
-  // SQLite qualifies the index name with the schema; the others qualify the table.
-  const target = d === "sqlite" ? `${q(schema)}.${q(idxName)} ON ${q(table)}` : `${q(idxName)} ON ${q(schema)}.${q(table)}`;
+  // SQLite qualifies the index name; Oracle needs it too, or the index lands in the user's own schema.
+  const target =
+    d === "sqlite" ? `${q(schema)}.${q(idxName)} ON ${q(table)}` : d === "oracle" ? `${q(schema)}.${q(idxName)} ON ${q(schema)}.${q(table)}` : `${q(idxName)} ON ${q(schema)}.${q(table)}`;
   const stmt = !picked.length
     ? ""
     : d === "clickhouse"

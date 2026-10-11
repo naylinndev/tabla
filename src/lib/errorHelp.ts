@@ -14,6 +14,35 @@ export function explainError(raw: string, provider?: Provider): ErrorHelp | null
   const hosted = provider && provider.group === "Cloud & hosted";
   const where = provider ? `${provider.label}'s dashboard` : "your provider's dashboard";
 
+  if (/dpi-1047|dpi-1072|needs oracle instant client/.test(m))
+    return {
+      title: "Oracle Instant Client isn't installed",
+      tips: [
+        "Tabla connects to Oracle through Oracle's free Instant Client library.",
+        "Use Install Instant Client at the top of this dialog, then restart Tabla when asked.",
+        "Or install Instant Client Basic Light yourself and put it on your library path (PATH, LD_LIBRARY_PATH).",
+      ],
+    };
+  if (/ora-12514|ora-12505/.test(m))
+    return {
+      title: "The listener doesn't know that service name",
+      tips: [
+        "Check the service name: it's the pluggable database, e.g. FREEPDB1, XEPDB1 or ORCLPDB1, not the host name.",
+        "On the server, lsnrctl status lists every service the listener knows.",
+        "Older setups may use a SID: paste a JDBC URL such as jdbc:oracle:thin:@host:1521:ORCL into Import from URL.",
+      ],
+    };
+  if (/ora-01017/.test(m))
+    return {
+      title: "Wrong user name or password",
+      tips: ["Oracle passwords are case-sensitive.", "Locked accounts give the same error: ask your DBA to check ALTER USER … ACCOUNT UNLOCK."],
+    };
+  if (/ora-28000/.test(m)) return { title: "This Oracle account is locked", tips: ["A DBA can unlock it with ALTER USER name ACCOUNT UNLOCK."] };
+  if (/ora-12541|ora-12545|ora-12170/.test(m))
+    return {
+      title: "Nothing answers at that address",
+      tips: ["Check the host and port (Oracle's listener uses 1521, or 2484 with TCPS).", "Make sure the database and its listener are running, and no firewall is in the way."],
+    };
   if (/is not allowed to access the server/.test(m))
     return {
       title: "Your IP address isn't allowed by the server's firewall",

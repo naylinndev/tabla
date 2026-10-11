@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { ShieldAlert, Wand2 } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
+import { joinStatements } from "../lib/sql";
 import { useApp, type Session } from "../lib/store";
 import { Modal } from "./ui";
 
@@ -39,7 +40,7 @@ export function SqlConfirm({
     setBusy(true);
     setError(null);
     try {
-      await api.runQuery(session.id, statements.join(";\n"));
+      await api.runQuery(session.id, joinStatements(session.connection.driver, statements));
       toast(`${title}: done`, "success");
       onDone();
       onClose();
@@ -66,11 +67,11 @@ export function SqlConfirm({
         <div className="code-block">
           <div className="code-head">
             <span>SQL</span>
-            <button className="btn ghost" onClick={() => navigator.clipboard.writeText((displayStatements ?? statements).join(";\n") + ";")}>
+            <button className="btn ghost" onClick={() => navigator.clipboard.writeText(joinStatements(session.connection.driver, displayStatements ?? statements, true))}>
               Copy
             </button>
           </div>
-          <pre>{(displayStatements ?? statements).map((s) => s + ";").join("\n")}</pre>
+          <pre>{joinStatements(session.connection.driver, displayStatements ?? statements, true)}</pre>
         </div>
         {error && (
           <div className="q-error" style={{ margin: 0 }}>

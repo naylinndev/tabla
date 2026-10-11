@@ -79,6 +79,16 @@ jobs:
           CLICKHOUSE_PASSWORD: "tabla-ci-only"
           CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
         ports: ["8123:8123"]
+      oracle:
+        image: gvenzl/oracle-free:23-slim-faststart
+        env:
+          # Throwaway container that only lives for this job.
+          ORACLE_PASSWORD: "tabla_ci_only"
+          APP_USER: "tabla"
+          APP_USER_PASSWORD: "tabla_ci_only"
+        ports: ["1521:1521"]
+        options: >-
+          --health-cmd healthcheck.sh --health-interval 10s --health-timeout 5s --health-retries 30
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
@@ -102,7 +112,12 @@ jobs:
       - name: System libraries and clients
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev postgresql-client mysql-client sqlite3
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev postgresql-client mysql-client sqlite3 libaio1
+      - name: Oracle Instant Client
+        run: |
+          curl -sSLo ic.zip https://download.oracle.com/otn_software/linux/instantclient/instantclient-basiclite-linuxx64.zip
+          unzip -q ic.zip -d "$RUNNER_TEMP/oracle"
+          echo "LD_LIBRARY_PATH=$(ls -d "$RUNNER_TEMP"/oracle/instantclient_*)" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - name: Seed test databases
@@ -141,6 +156,8 @@ jobs:
           TABLA_TEST_REDIS: "127.0.0.1:6379:9"
           TABLA_TEST_CLICKHOUSE: "127.0.0.1:8123:default:tabla_test"
           TABLA_TEST_CLICKHOUSE_PASSWORD: "tabla-ci-only"
+          TABLA_TEST_ORACLE: "127.0.0.1:1521:tabla:FREEPDB1"
+          TABLA_TEST_ORACLE_PASSWORD: "tabla_ci_only"
         run: |
           export TABLA_TEST_SQLITE="$RUNNER_TEMP/tabla_test.db"
           export TABLA_CONFIG_DIR="$RUNNER_TEMP/tabla-config"

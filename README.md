@@ -5,7 +5,8 @@
 **Every database. One beautiful app. Free forever.**
 
 A fast, native, open-source database client for macOS, Windows and Linux,
-for PostgreSQL, MySQL, MariaDB, SQLite, Redis and the clouds they run on.
+for PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, ClickHouse, SQLite, DuckDB,
+Redis and the clouds they run on.
 
 [Download](https://github.com/naylinndev/tabla/releases/latest) · [Docs](#features) · [Releases](https://github.com/naylinndev/tabla/releases) · [Security](SECURITY.md) · [Support](#support-tabla)
 
@@ -90,7 +91,8 @@ Maintainers: release and tap setup is described in [packaging/homebrew](packagin
 | SQL Server · Azure SQL | Supported | Native TDS driver |
 | ClickHouse · ClickHouse Cloud | Supported | HTTP interface (8123, or 8443 with TLS); no transactions |
 | DuckDB | Supported | Local files or `:memory:`; query Parquet, CSV and JSON files directly |
-| MongoDB · Oracle | Planned | See [Roadmap](#roadmap) |
+| Oracle 19c+ · Amazon RDS for Oracle | Supported | Uses Oracle Instant Client, which Tabla can install for you |
+| MongoDB | Planned | See [Roadmap](#roadmap) |
 
 Every connection can go through an **SSH tunnel**, for databases on a VPS or
 behind a bastion host, and can use **TLS client certificates**.
@@ -120,7 +122,8 @@ Tabla connects straight to your database and touches nothing else.
   single read statement (SELECT/WITH/SHOW/EXPLAIN), known escape hatches are blocked, and it runs in a
   read-only transaction with a timeout that is always rolled back. For a hard guarantee, share
   a connection that uses a database user with only `SELECT` rights. DuckDB AI queries also run with
-  file and network access switched off, so they can only read the database itself.
+  file and network access switched off, so they can only read the database itself. On Oracle,
+  Oracle's own parser must classify the statement as a query, and it runs in a read-only transaction.
 - **Production guardrails.** Connections tagged *production* show a red accent and
   ask before committing data or structure changes. Every row edit must match exactly one row.
 - **Locked-down web layer.** A strict Content Security Policy, no remote
@@ -130,7 +133,9 @@ Tabla connects straight to your database and touches nothing else.
 - **No telemetry, no analytics, no accounts.** The only network request Tabla
   makes on its own is a daily update check against GitHub Releases (a plain
   GET, no identifiers), which you can turn off under **Appearance → Updates**.
-  DuckDB extensions are only downloaded when you run `INSTALL` yourself.
+  DuckDB extensions are only downloaded when you run `INSTALL` yourself, and
+  Oracle Instant Client only when you click **Install Instant Client** (it
+  comes straight from oracle.com).
   Updates are downloaded only when you click **Install and restart**, and are
   installed only if they carry a valid signature from Tabla's release key.
 
@@ -209,10 +214,17 @@ cd src-tauri
 TABLA_TEST_PG="localhost:5432:<user>:tabla_test" \
 TABLA_TEST_MYSQL="localhost:3306:<user>:tabla_test" \
 TABLA_TEST_SQLITE="/path/to/tabla_test.db" \
+TABLA_TEST_MSSQL="localhost:1433:sa:tabla_test" TABLA_TEST_MSSQL_PASSWORD="…" \
+TABLA_TEST_CLICKHOUSE="localhost:8123:default:tabla_test" TABLA_TEST_CLICKHOUSE_PASSWORD="…" \
+TABLA_TEST_ORACLE="localhost:1521:<user>:FREEPDB1" TABLA_TEST_ORACLE_PASSWORD="…" \
 TABLA_TEST_SSH="127.0.0.1:2222:<user>:/dir/with/test/keys" \
 TABLA_CONFIG_DIR="$(mktemp -d)" \
 cargo test
 ```
+
+DuckDB tests always run (it's in-process). Oracle tests also need
+[Instant Client](https://www.oracle.com/database/technologies/instant-client.html)
+on the library path (`LD_LIBRARY_PATH` on Linux).
 
 Use throwaway databases and a throwaway SSH server: the tests write to them.
 `TABLA_CONFIG_DIR` keeps tests away from your real saved connections.
@@ -250,8 +262,8 @@ src-tauri/            Rust backend
 
 ## Roadmap
 
-- [x] SQL Server, ClickHouse, DuckDB
-- [ ] MongoDB, Oracle
+- [x] SQL Server, ClickHouse, DuckDB, Oracle
+- [ ] MongoDB
 - [x] Create tables and indexes visually
 - [x] Saved queries and snippets
 - [x] Query cancellation and adjustable result size

@@ -29,7 +29,8 @@ pub fn run() {
         eprintln!("tabla bridge: set TABLA_BRIDGE_TOKEN (16+ chars) and TABLA_CONFIG_DIR");
         std::process::exit(2);
     }
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+    // One dispatch function holds every command's future; debug builds need room for it.
+    let rt = tokio::runtime::Builder::new_multi_thread().thread_stack_size(16 << 20).enable_all().build().unwrap();
     rt.block_on(async move {
         let listener = TcpListener::bind(ADDR).await.expect("bind 127.0.0.1:1430");
         eprintln!("tabla bridge: listening on http://{ADDR}");
@@ -190,6 +191,7 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         "mcp_command" => json!(commands::mcp_info()?),
         "check_update" => json!(tokio::task::spawn_blocking(crate::updates::check).await.map_err(|e| AppError::msg(e.to_string()))??),
         "open_project_page" => Value::Null,
+        "oracle_client_status" => json!(tokio::task::spawn_blocking(crate::oracle_client::status).await.map_err(|e| AppError::msg(e.to_string()))?),
         other => return Err(AppError::msg(format!("bridge: unknown command {other}"))),
     })
 }

@@ -194,7 +194,7 @@ pub fn scan_env_dir(dir: &Path) -> AppResult<Vec<EnvUrl>> {
             let lower = value.to_ascii_lowercase();
             let is_db = [
                 "postgres://", "postgresql://", "mysql://", "mariadb://", "sqlite:", "file:", "duckdb:", "redis://", "rediss://",
-                "sqlserver://", "mssql://", "jdbc:sqlserver://", "clickhouse://", "clickhouses://",
+                "sqlserver://", "mssql://", "jdbc:sqlserver://", "clickhouse://", "clickhouses://", "oracle://", "jdbc:oracle:",
             ]
             .iter()
             .any(|p| lower.starts_with(p))
@@ -449,6 +449,39 @@ pub async fn pick_sqlite_file(app: AppHandle) -> AppResult<Option<String>> {
         .add_filter("All files", &["*"])
         .blocking_pick_file();
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Whether Oracle Instant Client is available, and whether Tabla can install it.
+#[tauri::command]
+pub async fn oracle_client_status() -> AppResult<crate::oracle_client::ClientStatus> {
+    tauri::async_runtime::spawn_blocking(crate::oracle_client::status).await.map_err(|e| AppError::msg(e.to_string()))
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// Downloads Oracle Instant Client from oracle.com into Tabla's data folder.
+/// Returns true when Tabla must restart to load it.
+#[tauri::command]
+pub async fn install_oracle_client(app: AppHandle) -> AppResult<bool> {
+    use tauri::Emitter;
+    crate::oracle_client::install(|downloaded, total| {
+        let _ = app.emit("oracle-client-progress", DownloadProgress { downloaded, total });
+    })
+    .await?;
+    // Linux loads the libraries at process start; elsewhere they load right away.
+    let ready = !cfg!(target_os = "linux") && crate::oracle_client::init().is_ok();
+    Ok(!ready)
+}
+
+/// Restarts Tabla, e.g. so a newly installed Oracle client loads.
+#[tauri::command]
+pub fn restart_app(app: AppHandle) {
+    app.restart()
 }
 
 /// Native file picker for DuckDB databases.

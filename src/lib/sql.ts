@@ -51,9 +51,12 @@ export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR
     .filter((f) => f.enabled && f.column)
     .map((f) => {
       const col = quoteIdent(driver, f.column);
-      const asText = driver === "postgres" || driver === "duckdb" ? `${col}::text` : driver === "clickhouse" ? `toString(${col})` : col;
+      // Oracle's LIKE is case-sensitive; compare upper-cased like the others' ILIKE.
+      const asText =
+        driver === "postgres" || driver === "duckdb" ? `${col}::text` : driver === "clickhouse" ? `toString(${col})` : driver === "oracle" ? `UPPER(${col})` : col;
       const like = driver === "postgres" || driver === "clickhouse" || driver === "duckdb" ? "ILIKE" : "LIKE";
       const lit = (v: string) => quoteLiteral(driver, v);
+      const pattern = (v: string) => (driver === "oracle" ? `UPPER(${lit(v)})` : lit(v));
       // MySQL and ClickHouse already treat backslash as the LIKE escape.
       const esc = driver === "mysql" || driver === "clickhouse" ? "" : " ESCAPE '\\'";
       switch (f.op) {
@@ -62,11 +65,11 @@ export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR
         case "is not null":
           return `${col} IS NOT NULL`;
         case "contains":
-          return `${asText} ${like} ${lit(`%${likeEscape(f.value, driver)}%`)}${esc}`;
+          return `${asText} ${like} ${pattern(`%${likeEscape(f.value, driver)}%`)}${esc}`;
         case "not contains":
-          return `${asText} NOT ${like} ${lit(`%${likeEscape(f.value, driver)}%`)}${esc}`;
+          return `${asText} NOT ${like} ${pattern(`%${likeEscape(f.value, driver)}%`)}${esc}`;
         case "starts with":
-          return `${asText} ${like} ${lit(`${likeEscape(f.value, driver)}%`)}${esc}`;
+          return `${asText} ${like} ${pattern(`${likeEscape(f.value, driver)}%`)}${esc}`;
         case "in": {
           const items = f.value.split(",").map((s) => s.trim()).filter(Boolean);
           return items.length ? `${col} IN (${items.map(lit).join(", ")})` : "1=0";
@@ -79,7 +82,8 @@ export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR
 }
 
 const NUMERIC = /int|serial|numeric|decimal|float|double|real|money|number|bit\b/i;
-export const isNumericType = (t: string) => NUMERIC.test(t) && !/interval|point/i.test(t);
+// Nested types (STRUCT(a INTEGER…), MAP, INTEGER[]) mention numbers but aren't numbers.
+export const isNumericType = (t: string) => NUMERIC.test(t) && !/interval|point|struct|map\s*\(|union\s*\(|\[\d*\]|array\s*\(|tuple\s*\(/i.test(t);
 export const isBoolType = (t: string) => /^bool(ean)?$|tinyint\(1\)/i.test(t);
 export const isJsonType = (t: string) => /json/i.test(t);
 
@@ -89,6 +93,7 @@ export const isJsonType = (t: string) => /json/i.test(t);
  */
 export function splitStatements(sql: string, driver?: Driver): { text: string; from: number; to: number }[] {
   if (driver === "mssql") return splitBatches(sql);
+  if (driver === "oracle") return splitOracle(sql);
   const out: { text: string; from: number; to: number }[] = [];
   let start = 0;
   let i = 0;
@@ -129,6 +134,88 @@ export function splitStatements(sql: string, driver?: Driver): { text: string; f
       push(i);
       start = i + 1;
       i++;
+    } else i++;
+  }
+  push(n);
+  return out;
+}
+
+/**
+ * Joins statements into one script. Oracle PL/SQL blocks end with their own
+ * `END;` and a line holding only "/", like in SQL*Plus.
+ */
+export function joinStatements(driver: Driver, statements: string[], forDisplay = false): string {
+  if (driver !== "oracle") return forDisplay ? statements.map((s) => s + ";").join("\n") : statements.join(";\n");
+  return statements
+    .map((s) => (isPlsqlStart(s) ? `${s.trim()}\n/` : `${s.trim().replace(/;$/, "")};`))
+    .join("\n");
+}
+
+/** Whether an Oracle statement is a PL/SQL block, which ends at a "/" line rather than at ";". */
+export function isPlsqlStart(sql: string): boolean {
+  const words = sql
+    .replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ")
+    .trim()
+    .split(/[^A-Za-z0-9_]+/)
+    .slice(0, 6)
+    .map((w) => w.toUpperCase());
+  if (words[0] === "BEGIN" || words[0] === "DECLARE") return true;
+  if (words[0] !== "CREATE") return false;
+  const rest = words.slice(1).filter((w) => !["OR", "REPLACE", "EDITIONABLE", "NONEDITIONABLE"].includes(w));
+  return ["PROCEDURE", "FUNCTION", "PACKAGE", "TRIGGER", "TYPE", "LIBRARY"].includes(rest[0]);
+}
+
+/**
+ * Oracle scripts split the way SQL*Plus does (and as Tabla runs them): SQL
+ * statements end at ";", PL/SQL blocks at a line holding only "/". Handles
+ * quotes, q'[…]' literals and comments.
+ */
+function splitOracle(sql: string): { text: string; from: number; to: number }[] {
+  const out: { text: string; from: number; to: number }[] = [];
+  let start = 0;
+  let i = 0;
+  let plsql: boolean | null = null;
+  const n = sql.length;
+  const push = (end: number) => {
+    let raw = sql.slice(start, end);
+    if (raw.trim()) {
+      const lead = raw.length - raw.trimStart().length;
+      raw = raw.trim();
+      out.push({ text: raw, from: start + lead, to: start + lead + raw.length });
+    }
+  };
+  const slashLine = (at: number) => {
+    const ls = sql.lastIndexOf("\n", at - 1) + 1;
+    const le = sql.indexOf("\n", at);
+    return sql.slice(ls, le === -1 ? n : le).trim() === "/";
+  };
+  while (i < n) {
+    const c = sql[i];
+    const next = sql[i + 1];
+    if (plsql === null && !/\s/.test(c) && !(c === "-" && next === "-") && !(c === "/" && next === "*")) plsql = isPlsqlStart(sql.slice(i, i + 200));
+    if (c === "-" && next === "-") {
+      const e = sql.indexOf("\n", i);
+      i = e === -1 ? n : e;
+    } else if (c === "/" && next === "*") {
+      const e = sql.indexOf("*/", i + 2);
+      i = e === -1 ? n : e + 2;
+    } else if ((c === "q" || c === "Q") && next === "'" && i + 2 < n && !/[A-Za-z0-9_$#]/.test(sql[i - 1] ?? "")) {
+      const close = ({ "[": "]", "{": "}", "<": ">", "(": ")" } as Record<string, string>)[sql[i + 2]] ?? sql[i + 2];
+      const e = sql.indexOf(close + "'", i + 3);
+      i = e === -1 ? n : e + 2;
+    } else if (c === "'" || c === '"') {
+      const e = sql.indexOf(c, i + 1);
+      i = e === -1 ? n : e + 1;
+    } else if (c === ";" && plsql === false) {
+      push(i);
+      start = i + 1;
+      plsql = null;
+      i++;
+    } else if (c === "/" && slashLine(i)) {
+      push(i);
+      const e = sql.indexOf("\n", i);
+      start = i = e === -1 ? n : e + 1;
+      plsql = null;
     } else i++;
   }
   push(n);

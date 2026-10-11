@@ -32,7 +32,7 @@
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "Free, open-source database client",
-    "longDescription": "Tabla is a fast, native, open-source GUI client for PostgreSQL, MySQL and SQLite.",
+    "longDescription": "Tabla is a fast, native, open-source GUI client for PostgreSQL, MySQL, SQL Server, Oracle, ClickHouse, SQLite, DuckDB and Redis.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -30,10 +30,18 @@ mod duck;
 mod error;
 mod mcp;
 mod mssql;
+mod ora;
+mod ora_catalog;
+mod oracle_client;
 mod redis_db;
 mod ssh;
 mod updates;
 mod users;
+
+/// Process setup that must happen before anything else (see `oracle_client::prepare_process`).
+pub fn prepare_process() {
+    oracle_client::prepare_process();
+}
 
 pub fn run_mcp() {
     mcp::run();
@@ -90,6 +98,9 @@ pub fn run() {
             commands::apply_alter,
             commands::pick_sqlite_file,
             commands::pick_duckdb_file,
+            commands::oracle_client_status,
+            commands::install_oracle_client,
+            commands::restart_app,
             commands::pick_file,
             commands::pick_csv_file,
             commands::export_file,

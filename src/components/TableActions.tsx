@@ -24,7 +24,7 @@ function buildSql(d: Driver, schema: string, t: TableInfo, action: Action, targe
       if (d === "mysql") return [`CREATE TABLE ${to} LIKE ${from}`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
       // Copies columns and identity; keys and indexes are not copied.
       if (d === "mssql") return [`SELECT * INTO ${to} FROM ${from}${withData ? "" : " WHERE 1 = 0"}`];
-      return [`CREATE TABLE ${to} AS SELECT * FROM ${from}${withData ? "" : d === "duckdb" ? " WHERE false" : " WHERE 0"}`];
+      return [`CREATE TABLE ${to} AS SELECT * FROM ${from}${withData ? "" : d === "duckdb" ? " WHERE false" : d === "oracle" ? " WHERE 1 = 0" : " WHERE 0"}`];
     case "truncate":
       return d === "sqlite" ? [`DELETE FROM ${from}`] : [`TRUNCATE TABLE ${from}`];
     case "drop":
@@ -119,7 +119,8 @@ function TableActionDialog({ session, action, table, onClose }: { session: Sessi
     setError(null);
     try {
       const begin = d === "mssql" ? "BEGIN TRAN" : "BEGIN";
-      const script = d === "mysql" || d === "clickhouse" || stmts.length === 1 ? stmts.join(";\n") : `${begin};\n${stmts.join(";\n")};\nCOMMIT`;
+      // Oracle, like MySQL, commits structure changes one by one anyway.
+      const script = d === "mysql" || d === "clickhouse" || d === "oracle" || stmts.length === 1 ? stmts.join(";\n") : `${begin};\n${stmts.join(";\n")};\nCOMMIT`;
       await api.runQuery(session.id, script);
       const st = useApp.getState();
       if (action === "rename" || action === "drop") {
@@ -166,9 +167,9 @@ function TableActionDialog({ session, action, table, onClose }: { session: Sessi
           </div>
         )}
         {action === "duplicate" && <Checkbox checked={withData} onChange={setWithData} label="Copy the data too" />}
-        {action === "duplicate" && isLocal(d) && (
+        {action === "duplicate" && (isLocal(d) || d === "oracle") && (
           <p className="hint">
-            <Info /> {d === "duckdb" ? "DuckDB" : "SQLite"} copies columns and data, but not keys, indexes or constraints.
+            <Info /> {d === "duckdb" ? "DuckDB" : d === "oracle" ? "Oracle" : "SQLite"} copies columns and data, but not keys, indexes or constraints.
           </p>
         )}
         {destructive && (
