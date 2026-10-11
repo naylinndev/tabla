@@ -1,6 +1,6 @@
 import type { Driver } from "./api";
 
-export interface Snippet {
+interface Snippet {
   name: string;
   hint: string;
   sql: string;

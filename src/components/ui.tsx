@@ -4,7 +4,7 @@ import { CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { useApp } from "../lib/store";
 
 export const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
-export const mod = isMac ? "⌘" : "Ctrl";
+const mod = isMac ? "⌘" : "Ctrl";
 
 export function Kbd({ keys }: { keys: string }) {
   return <span className="kbd">{keys.replace(/Mod/g, mod).replace(/Shift/g, isMac ? "⇧" : "Shift")}</span>;

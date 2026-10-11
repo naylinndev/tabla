@@ -39,7 +39,7 @@ function parseClickhouse(u: URL, scheme: string): Partial<ConnectionConfig> {
  * framework docs: ADO.NET ("Server=tcp:host,1433;Initial Catalog=db;…"),
  * JDBC ("jdbc:sqlserver://host:1433;databaseName=db;…") and sqlserver:// URLs.
  */
-export function parseMssql(raw: string): Partial<ConnectionConfig> | null {
+function parseMssql(raw: string): Partial<ConnectionConfig> | null {
   let s = raw.trim().replace(/^jdbc:/i, "");
   let host = "";
   let port = 1433;

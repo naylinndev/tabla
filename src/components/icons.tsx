@@ -21,9 +21,6 @@ export function Logo({ size = 28 }: { size?: number }) {
   );
 }
 
-const DRIVER_LABEL: Record<Driver, string> = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse", duckdb: "DuckDB", oracle: "Oracle", mongodb: "MongoDB" };
-
-export const driverLabel = (d: Driver) => DRIVER_LABEL[d];
 
 /** Brand-colored monogram tile per engine/provider (no third-party logos shipped). */
 export function DriverIcon({ driver, provider, size = 28 }: { driver: Driver; provider?: string; size?: number }) {

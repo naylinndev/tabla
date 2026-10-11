@@ -189,11 +189,18 @@ fn unpack(archive: &Path, root: &Path) -> AppResult<()> {
             if mode & 0o170000 == 0o120000 {
                 let mut target = String::new();
                 std::io::Read::read_to_string(&mut entry, &mut target)?;
+                // Only links to a sibling file: anything else could point
+                // outside Tabla's folder and redirect later writes.
+                if target.is_empty() || target.contains(['/', '\\']) || target == ".." {
+                    return Err(AppError::msg("Unexpected link in the Instant Client download"));
+                }
                 let _ = std::fs::remove_file(&out);
                 std::os::unix::fs::symlink(target, &out)?;
                 continue;
             }
         }
+        // Never write through a link left by an earlier entry.
+        let _ = std::fs::remove_file(&out);
         let mut f = std::fs::File::create(&out)?;
         std::io::copy(&mut entry, &mut f)?;
         #[cfg(unix)]

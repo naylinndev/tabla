@@ -1,6 +1,6 @@
 import type { Provider } from "./providers";
 
-export interface ErrorHelp {
+interface ErrorHelp {
   title: string;
   tips: string[];
 }

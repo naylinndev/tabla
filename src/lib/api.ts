@@ -5,14 +5,14 @@ export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql" | "clic
 /** Engines that open a local file in-process: no host, port, SSH or SSL. */
 export const isLocal = (d: Driver) => d === "sqlite" || d === "duckdb";
 /** Drivers that speak SQL (tables, queries, structure). */
-export type SqlDriver = Exclude<Driver, "redis" | "mongodb">;
+type SqlDriver = Exclude<Driver, "redis" | "mongodb">;
 
 /** Engines with tables and SQL (Redis and MongoDB have their own workspaces). */
 export const isSql = (d: Driver): d is SqlDriver => d !== "redis" && d !== "mongodb";
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";
 export type EnvTag = "" | "local" | "development" | "staging" | "production";
 
-export type SshAuth = "password" | "key" | "agent";
+type SshAuth = "password" | "key" | "agent";
 
 export interface SshConfig {
   enabled: boolean;
@@ -85,7 +85,7 @@ export interface ColumnInfo {
   extra: string;
 }
 
-export interface IndexInfo {
+interface IndexInfo {
   name: string;
   definition: string;
   unique: boolean;
@@ -120,7 +120,7 @@ export interface TableRelations {
   triggers: TriggerInfo[];
 }
 
-export interface MongoOverview {
+interface MongoOverview {
   version: string;
   databases: string[];
   current: string;
@@ -129,7 +129,7 @@ export interface MongoCollection {
   name: string;
   kind: "collection" | "view" | "timeseries";
 }
-export interface MongoFindArgs {
+interface MongoFindArgs {
   db: string;
   collection: string;
   filter: string;
@@ -159,7 +159,7 @@ export interface RedisKey {
   ttl: number;
 }
 
-export interface RedisScanPage {
+interface RedisScanPage {
   cursor: number;
   keys: RedisKey[];
 }
@@ -172,7 +172,7 @@ export interface RedisValue {
   truncated: boolean;
 }
 
-export interface RedisOverview {
+interface RedisOverview {
   version: string;
   mode: string;
   usedMemory: string;
@@ -249,7 +249,7 @@ export interface TablePage {
   sql: string;
 }
 
-export interface SessionInfo {
+interface SessionInfo {
   sessionId: string;
   serverVersion: string;
   schemas: string[];
@@ -287,7 +287,7 @@ export interface AlterRequest {
   order: string[];
 }
 
-export interface FetchArgs {
+interface FetchArgs {
   schema: string;
   table: string;
   filter?: string | null;

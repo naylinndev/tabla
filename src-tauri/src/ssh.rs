@@ -58,7 +58,8 @@ impl client::Handler for Client {
 }
 
 fn tabla_known_hosts() -> Option<PathBuf> {
-    config_dir().ok().map(|d| d.join("known_hosts"))
+    // Created owner-only, like the rest of Tabla's files: it lists the hosts you connect to.
+    config_dir().ok().filter(|d| crate::vault::private_dir(d).is_ok()).map(|d| d.join("known_hosts"))
 }
 
 fn changed_msg(host: &str, file: &str) -> String {

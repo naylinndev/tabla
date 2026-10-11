@@ -3,7 +3,7 @@ import { Check, Copy, Heart } from "lucide-react";
 import qr from "../assets/donate-btc.svg";
 import { Modal } from "./ui";
 
-export const BTC_ADDRESS = "bc1qjssygyqayth4sm8zcw7kq56ml3rvl3vsm24qq9";
+const BTC_ADDRESS = "bc1qjssygyqayth4sm8zcw7kq56ml3rvl3vsm24qq9";
 
 export function SupportDialog({ onClose }: { onClose(): void }) {
   const [copied, setCopied] = useState(false);

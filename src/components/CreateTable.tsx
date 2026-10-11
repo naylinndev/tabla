@@ -44,7 +44,7 @@ function timestamps(d: Driver): Col[] {
 }
 
 /** CREATE TABLE for each engine, with auto-increment written the idiomatic way. */
-export function createTableSql(d: Driver, schema: string, table: string, cols: Col[]): string {
+function createTableSql(d: Driver, schema: string, table: string, cols: Col[]): string {
   // Oracle folds unquoted names to upper case; quoting lower-case ones would
   // force everyone to quote them forever after.
   const q = (s: string) => quoteIdent(d, d === "oracle" && s === s.toLowerCase() ? s.toUpperCase() : s);

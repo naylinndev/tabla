@@ -140,7 +140,7 @@ function compact(n: number) {
   return Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 }
 
-export function Sidebar({ session }: { session: Session }) {
+function Sidebar({ session }: { session: Session }) {
   const [q, setQ] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const openTable = useApp((s) => s.openTable);

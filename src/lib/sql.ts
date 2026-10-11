@@ -152,7 +152,7 @@ export function joinStatements(driver: Driver, statements: string[], forDisplay 
 }
 
 /** Whether an Oracle statement is a PL/SQL block, which ends at a "/" line rather than at ";". */
-export function isPlsqlStart(sql: string): boolean {
+function isPlsqlStart(sql: string): boolean {
   const words = sql
     .replace(/--[^\n]*|\/\*[\s\S]*?\*\//g, " ")
     .trim()

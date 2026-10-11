@@ -18,8 +18,8 @@ export interface SavedQuery {
   sql: string;
   updatedAt: number;
 }
-export type UsersTab = { id: string; kind: "users"; title: string };
-export type ErdTab = { id: string; kind: "erd"; title: string; schema: string };
+type UsersTab = { id: string; kind: "users"; title: string };
+type ErdTab = { id: string; kind: "erd"; title: string; schema: string };
 export type Tab = TableTab | QueryTab | UsersTab | ErdTab;
 
 export interface Session {
@@ -36,7 +36,7 @@ export interface Session {
   activeTabId: string | null;
 }
 
-export interface Toast {
+interface Toast {
   id: string;
   kind: "success" | "error" | "info";
   message: string;
@@ -111,7 +111,7 @@ function saveDrafts(s: Session) {
   local.set(draftsKey(s.connection.id), drafts);
 }
 
-export interface HistoryEntry {
+interface HistoryEntry {
   sql: string;
   at: number;
   ms: number;
