@@ -6,7 +6,7 @@
 
 A fast, native, open-source database client for macOS, Windows and Linux,
 for PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, ClickHouse, SQLite, DuckDB,
-Redis and the clouds they run on.
+MongoDB, Redis and the clouds they run on.
 
 [Download](https://github.com/naylinndev/tabla/releases/latest) · [Docs](#features) · [Releases](https://github.com/naylinndev/tabla/releases) · [Security](SECURITY.md) · [Support](#support-tabla)
 
@@ -18,9 +18,26 @@ Redis and the clouds they run on.
 
 `No paywall. No tab limits. No telemetry.`
 
+<br />
+
+<img src="docs/screenshots/query.png" alt="Tabla's query editor in dark mode: a SQL query joining orders, products and categories, with revenue by category and month in the results grid" width="900" />
+
 </div>
 
 ---
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/home.png" alt="Home screen listing Postgres, MariaDB, MongoDB, Redis and DuckDB connections with production, staging and dev tags" /><br /><sub><b>All your databases in one place.</b> Tag connections as production, staging or dev.</sub></td>
+    <td width="50%"><img src="docs/screenshots/table.png" alt="Customers table open in a fast, spreadsheet-like data grid with column types in the header" /><br /><sub><b>A fast data grid.</b> Edit cells, filter, sort and page through large tables.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/structure.png" alt="Structure editor for the orders table showing columns, types, defaults and indexes" /><br /><sub><b>Visual structure editing.</b> Columns, defaults and indexes, with the SQL shown first.</sub></td>
+    <td width="50%"><img src="docs/screenshots/erd.png" alt="ER diagram of six related tables with foreign keys drawn between them" /><br /><sub><b>ER diagrams.</b> See how every table relates, and export it as SVG.</sub></td>
+  </tr>
+</table>
 
 ## Features
 
