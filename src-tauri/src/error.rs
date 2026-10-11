@@ -12,6 +12,8 @@ pub enum AppError {
     Json(#[from] serde_json::Error),
     #[error("{0}")]
     Tauri(#[from] tauri::Error),
+    #[error("{}", ms_message(.0))]
+    Mssql(#[from] tiberius::error::Error),
     #[error("{0}")]
     Msg(String),
 }
@@ -45,6 +47,15 @@ pub fn db_message(e: &sqlx::Error) -> String {
         }
     }
     out
+}
+
+/// SQL Server's own message without tiberius' "Token error: '…' on server …" wrapper.
+pub fn ms_message(e: &tiberius::error::Error) -> String {
+    match e {
+        tiberius::error::Error::Server(t) => t.message().to_string(),
+        tiberius::error::Error::Io { message, .. } => message.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// Returned by SQL-only code paths if they are ever reached for a Redis session.

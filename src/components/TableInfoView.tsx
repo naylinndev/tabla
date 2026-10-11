@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
-import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { Check, Copy, RefreshCw } from "lucide-react";
 import { api, errorMessage, type TableDetails } from "../lib/api";
 import { formatBytes, formatNumber } from "../lib/format";
@@ -16,7 +16,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
   { tag: [t.typeName, t.function(t.variableName), t.standard(t.name)], color: "var(--syn-fn)" },
 ]);
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL };
 
 export function TableInfoView({ session, schema, table }: { session: Session; schema: string; table: string }) {
   const [info, setInfo] = useState<TableDetails | null>(null);

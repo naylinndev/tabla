@@ -16,10 +16,67 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "production", label: "Production" },
 ];
 type DialogTab = "connection" | "ssh" | "ssl" | "options";
-const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379 };
+const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433 };
 
-/** Parses postgres://, mysql:// and sqlite:// URLs into form fields. */
+/**
+ * SQL Server connection strings in the forms people copy from Azure and
+ * framework docs: ADO.NET ("Server=tcp:host,1433;Initial Catalog=db;…"),
+ * JDBC ("jdbc:sqlserver://host:1433;databaseName=db;…") and sqlserver:// URLs.
+ */
+export function parseMssql(raw: string): Partial<ConnectionConfig> | null {
+  let s = raw.trim().replace(/^jdbc:/i, "");
+  let host = "";
+  let port = 1433;
+  const kv: Record<string, string> = {};
+  const m = /^(sqlserver|mssql):\/\/([^;]*)(;.*)?$/i.exec(s);
+  if (m) {
+    // sqlserver://user:pass@host:port/db — or the JDBC form with ;key=value pairs.
+    let authority = m[2];
+    s = m[3] ?? "";
+    const at = authority.lastIndexOf("@");
+    if (at >= 0) {
+      const [u, p] = authority.slice(0, at).split(":");
+      kv["user id"] = decodeURIComponent(u ?? "");
+      if (p !== undefined) kv.password = decodeURIComponent(p);
+      authority = authority.slice(at + 1);
+    }
+    const [hp, db] = authority.split("/");
+    if (db) kv.database = decodeURIComponent(db.split("?")[0]);
+    const [h, p] = hp.split(/[:,]/);
+    host = h.split("\\")[0];
+    if (p) port = +p;
+  } else if (!/(^|;)\s*(server|data source|address|addr)\s*=/i.test(s)) {
+    return null;
+  }
+  for (const part of s.split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) kv[part.slice(0, i).trim().toLowerCase()] = part.slice(i + 1).trim().replace(/^\{(.*)\}$/, "$1");
+  }
+  const server = kv.server ?? kv["data source"] ?? kv.address ?? kv.addr ?? kv.servername;
+  if (server) {
+    const [h, p] = server.replace(/^tcp:/i, "").split(",");
+    host = h.split("\\")[0];
+    if (p) port = +p;
+  }
+  if (kv.port) port = +kv.port;
+  if (!host) return null;
+  const enc = (kv.encrypt ?? "").toLowerCase();
+  const trust = (kv.trustservercertificate ?? "").toLowerCase() === "true";
+  const sslMode: SslMode = enc === "false" || enc === "no" || enc === "optional" ? "prefer" : trust ? "require" : enc ? "verify-full" : "require";
+  return {
+    driver: "mssql",
+    host: host === "." || host.toLowerCase() === "(local)" ? "localhost" : host,
+    port,
+    user: kv["user id"] ?? kv.uid ?? kv.user ?? kv.username ?? "",
+    password: kv.password ?? kv.pwd,
+    database: kv["initial catalog"] ?? kv.database ?? kv.databasename ?? "",
+    sslMode,
+  };
+}
+
+/** Parses postgres://, mysql://, sqlite://, redis:// and SQL Server connection strings into form fields. */
 export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
+  if (/^(jdbc:)?(sqlserver|mssql):\/\//i.test(raw.trim()) || /(^|;)\s*(server|data source)\s*=/i.test(raw)) return parseMssql(raw);
   try {
     const u = new URL(raw.trim());
     const scheme = u.protocol.replace(":", "");
@@ -294,14 +351,14 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
           <div className="field">
             <label>Engine</label>
             <div className="segmented" style={{ alignSelf: "flex-start" }}>
-              {(["postgres", "mysql"] as Driver[]).map((d) => (
+              {(["postgres", "mysql", "mssql"] as Driver[]).map((d) => (
                 <button
                   type="button"
                   key={d}
                   className={f.driver === d ? "on" : ""}
                   onClick={() => setF((x) => ({ ...x, driver: d, port: DEFAULT_PORT[d] }))}
                 >
-                  {d === "postgres" ? "PostgreSQL / Aurora PostgreSQL" : "MySQL / Aurora MySQL"}
+                  {d === "postgres" ? "PostgreSQL / Aurora PostgreSQL" : d === "mysql" ? "MySQL / Aurora MySQL" : "SQL Server"}
                 </button>
               ))}
             </div>
@@ -567,7 +624,10 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 ["sslCert", "Client certificate", "Only if your server requires client certificates"],
                 ["sslKey", "Client key", "Private key that matches the client certificate"],
               ] as const
-            ).map(([k, label, hint]) => (
+            )
+              // SQL Server negotiates TLS inside TDS and has no client certificates.
+              .filter(([k]) => f.driver !== "mssql" || k === "sslCa")
+              .map(([k, label, hint]) => (
               <div className="field" key={k}>
                 <label>{label}</label>
                 <div className="url-row">
@@ -594,7 +654,12 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 <Info /> Require turns on TLS (rediss://). Prefer and Disable connect without TLS. Verify also checks the certificate.
               </p>
             )}
-            {f.ssh.enabled && f.sslMode === "verify-full" && (
+            {f.driver === "mssql" && (
+              <p className="hint">
+                <Info /> Prefer and Require encrypt without checking the certificate (like TrustServerCertificate=true). Verify checks it against your system's trusted CAs, or the CA file above.
+              </p>
+            )}
+            {f.ssh.enabled && f.sslMode === "verify-full" && f.driver !== "mssql" && (
               <div className="hint">
                 <Info /> With an SSH tunnel, host name verification sees 127.0.0.1. Use Require instead of Verify.
               </div>

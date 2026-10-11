@@ -71,6 +71,13 @@ jobs:
       redis:
         image: redis:7
         ports: ["6379:6379"]
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          # Throwaway container that only lives for this job.
+          MSSQL_SA_PASSWORD: "Tabla-ci-only-1"
+        ports: ["1433:1433"]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -95,6 +102,11 @@ jobs:
           psql -h 127.0.0.1 -U postgres -d tabla_test -v ON_ERROR_STOP=1 -f tests/fixtures/seed_postgres.sql
           mysql -h 127.0.0.1 -uroot tabla_test < tests/fixtures/seed_mysql.sql
           sqlite3 "$RUNNER_TEMP/tabla_test.db" < tests/fixtures/seed_sqlite.sql
+          for i in $(seq 1 60); do
+            docker exec ${{ job.services.mssql.id }} /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "Tabla-ci-only-1" -C -b \
+              -Q "IF DB_ID('tabla_test') IS NULL CREATE DATABASE tabla_test" && break
+            sleep 2
+          done
       - name: Integration tests
         working-directory: src-tauri
         shell: bash
@@ -102,6 +114,8 @@ jobs:
           TABLA_TEST_PG: "127.0.0.1:5432:postgres:tabla_test"
           TABLA_TEST_MYSQL: "127.0.0.1:3306:root:tabla_test"
           TABLA_TEST_REDIS: "127.0.0.1:6379:9"
+          TABLA_TEST_MSSQL: "127.0.0.1:1433:sa:tabla_test"
+          TABLA_TEST_MSSQL_PASSWORD: "Tabla-ci-only-1"
         run: |
           export TABLA_TEST_SQLITE="$RUNNER_TEMP/tabla_test.db"
           export TABLA_CONFIG_DIR="$RUNNER_TEMP/tabla-config"

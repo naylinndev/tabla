@@ -153,7 +153,7 @@ export function Home() {
           <div className="home-empty">
             <Database size={28} className="dim" />
             <h2>Connect your first database</h2>
-            <p>PostgreSQL, MySQL, MariaDB, SQLite and hosted services like Supabase, Neon, PlanetScale and CockroachDB. Passwords are kept in your system keychain, never in files.</p>
+            <p>PostgreSQL, MySQL, MariaDB, SQL Server, SQLite, Redis and hosted services like Supabase, Neon, PlanetScale and CockroachDB. Passwords are kept in your system keychain, never in files.</p>
             <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
               <button className="btn primary lg" onClick={() => setEditing(newConnection())}>
                 <Plus /> New connection

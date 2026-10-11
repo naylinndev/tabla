@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type Driver = "postgres" | "mysql" | "sqlite" | "redis";
+export type Driver = "postgres" | "mysql" | "sqlite" | "redis" | "mssql";
 /** Drivers that speak SQL (tables, queries, structure). */
 export type SqlDriver = Exclude<Driver, "redis">;
 export type SslMode = "disable" | "prefer" | "require" | "verify-full";

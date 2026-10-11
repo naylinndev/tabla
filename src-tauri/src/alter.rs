@@ -4,6 +4,9 @@
 //! - PostgreSQL: full support, applied in one transaction (all or nothing).
 //! - MySQL/MariaDB: full support including physical column order (AFTER/FIRST).
 //!   DDL auto-commits there, so statements apply one by one.
+//! - SQL Server: full support except column order, applied in one
+//!   transaction. Defaults are named constraints there, so changing or
+//!   dropping one looks up and drops the existing constraint first.
 //! - SQLite: add, rename and drop only (SQLite can't alter a column's type,
 //!   nullability or default in place).
 
@@ -111,6 +114,19 @@ impl Session {
         Ok(extra)
     }
 
+    /// SQL Server: name of the default constraint on a column, if any.
+    async fn mssql_default_constraint(&self, from: &str, column: &str) -> AppResult<Option<String>> {
+        let d = self.driver;
+        let sql = format!(
+            "SELECT dc.name FROM sys.default_constraints dc JOIN sys.columns c ON c.object_id = dc.parent_object_id \
+             AND c.column_id = dc.parent_column_id WHERE dc.parent_object_id = OBJECT_ID({}) AND c.name = {}",
+            d.quote_literal(from),
+            d.quote_literal(column)
+        );
+        let rows = self.run_script(&sql, 1).await?;
+        Ok(rows.first().and_then(|r| r.rows.first()).and_then(|r| r.first().cloned().flatten()))
+    }
+
     /// Builds the statements for a structure change without running them.
     pub async fn plan_alter(&self, req: &AlterRequest) -> AppResult<Vec<String>> {
         let d = self.driver;
@@ -123,7 +139,9 @@ impl Session {
                 (None, None) => {}
                 (None, Some(c)) => {
                     validate(c)?;
-                    let mut s = format!("ALTER TABLE {from} ADD COLUMN {} {}", q(&c.name), c.data_type.trim());
+                    // SQL Server's ADD takes no COLUMN keyword.
+                    let add = if d == Driver::Mssql { "ADD" } else { "ADD COLUMN" };
+                    let mut s = format!("ALTER TABLE {from} {add} {} {}", q(&c.name), c.data_type.trim());
                     if !c.nullable {
                         if d == Driver::Sqlite && default_of(c).is_none() {
                             return Err(AppError::msg(format!(
@@ -138,7 +156,14 @@ impl Session {
                     }
                     out.push(s);
                 }
-                (Some(o), None) => out.push(format!("ALTER TABLE {from} DROP COLUMN {}", q(&o.name))),
+                (Some(o), None) => {
+                    if d == Driver::Mssql {
+                        if let Some(dc) = self.mssql_default_constraint(&from, &o.name).await? {
+                            out.push(format!("ALTER TABLE {from} DROP CONSTRAINT {}", q(&dc)));
+                        }
+                    }
+                    out.push(format!("ALTER TABLE {from} DROP COLUMN {}", q(&o.name)));
+                }
                 (Some(o), Some(c)) => {
                     if o == c {
                         continue;
@@ -178,6 +203,31 @@ impl Session {
                             }
                             s.push_str(&self.mysql_extra(&req.schema, &req.table, &o.name).await?);
                             out.push(s);
+                        }
+                        Driver::Mssql => {
+                            if o.name != c.name {
+                                // sp_rename takes the object path as a string: schema.table.column.
+                                let path = format!("{}.{}", from, q(&o.name));
+                                out.push(format!("EXEC sp_rename {}, {}, 'COLUMN'", d.quote_literal(&path), d.quote_literal(&c.name)));
+                            }
+                            let col = q(&c.name);
+                            let type_changed = o.data_type.trim() != c.data_type.trim() || o.nullable != c.nullable;
+                            let default_changed = default_of(o) != default_of(c);
+                            // A default constraint blocks ALTER COLUMN, so drop it first and re-add after.
+                            let mut had_default = false;
+                            if type_changed || default_changed {
+                                if let Some(dc) = self.mssql_default_constraint(&from, &o.name).await? {
+                                    out.push(format!("ALTER TABLE {from} DROP CONSTRAINT {}", q(&dc)));
+                                    had_default = true;
+                                }
+                            }
+                            if type_changed {
+                                let null = if c.nullable { "NULL" } else { "NOT NULL" };
+                                out.push(format!("ALTER TABLE {from} ALTER COLUMN {col} {} {null}", c.data_type.trim()));
+                            }
+                            if let Some(def) = default_of(c).filter(|_| default_changed || had_default) {
+                                out.push(format!("ALTER TABLE {from} ADD DEFAULT {def} FOR {col}"));
+                            }
                         }
                         Driver::Redis => return Err(crate::error::not_sql()),
                         Driver::Sqlite => {
@@ -246,6 +296,28 @@ impl Session {
         match &self.pool {
             Pool::Pg(p) => in_tx!(p),
             Pool::Lite(p) => in_tx!(p),
+            // SQL Server DDL is transactional too.
+            Pool::Ms(p) => {
+                let mut conn = p.acquire().await?;
+                crate::mssql::run(&mut conn, "SET XACT_ABORT ON; BEGIN TRAN; SELECT 1", 1, None).await?;
+                let mut failed = None;
+                for s in &stmts {
+                    let started = std::time::Instant::now();
+                    let res = crate::mssql::run(&mut conn, s, 0, None).await;
+                    self.record(s, started, res.as_ref().map(|_| "ok".to_string()).map_err(|e| e.to_string()));
+                    if let Err(e) = res {
+                        failed = Some(e);
+                        break;
+                    }
+                }
+                let end = if failed.is_some() { "IF @@TRANCOUNT > 0 ROLLBACK" } else { "COMMIT" };
+                if crate::mssql::run(&mut conn, end, 0, None).await.is_err() {
+                    conn.discard();
+                }
+                if let Some(e) = failed {
+                    return Err(e);
+                }
+            }
             // MySQL commits each DDL statement implicitly.
             Pool::My(p) => {
                 for (i, s) in stmts.iter().enumerate() {

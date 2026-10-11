@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
-import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { ArrowRight, Code2, ExternalLink, Info, Minus, Plus, Power, RefreshCw } from "lucide-react";
 import { api, errorMessage, type Driver, type ForeignKey, type TableRelations, type TriggerInfo } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
@@ -237,12 +237,14 @@ const highlight = HighlightStyle.define([
   { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
 ]);
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL };
 
 function triggerTemplate(d: Driver, schema: string, table: string): string {
   const tq = `${quoteIdent(d, schema)}.${quoteIdent(d, table)}`;
   if (d === "postgres")
     return `-- 1. The function the trigger runs\nCREATE OR REPLACE FUNCTION ${table}_before_write() RETURNS trigger\nLANGUAGE plpgsql AS $$\nBEGIN\n  -- NEW is the row being written, e.g. NEW.updated_at := now();\n  RETURN NEW;\nEND $$;\n\n-- 2. The trigger\nCREATE TRIGGER ${table}_before_write\nBEFORE INSERT OR UPDATE ON ${tq}\nFOR EACH ROW EXECUTE FUNCTION ${table}_before_write();`;
+  if (d === "mssql")
+    return `CREATE TRIGGER ${quoteIdent(d, schema)}.${quoteIdent(d, `${table}_after_write`)}\nON ${tq}\nAFTER INSERT, UPDATE\nAS\nBEGIN\n  SET NOCOUNT ON;\n  -- "inserted" holds the new rows and "deleted" the old ones, e.g.\n  -- UPDATE t SET updated_at = SYSDATETIME() FROM ${tq} t JOIN inserted i ON i.id = t.id;\nEND`;
   if (d === "mysql")
     return `CREATE TRIGGER \`${table}_before_insert\`\nBEFORE INSERT ON ${tq}\nFOR EACH ROW\nSET NEW.created_at = IFNULL(NEW.created_at, NOW());`;
   return `CREATE TRIGGER ${table}_after_insert\nAFTER INSERT ON ${tq}\nBEGIN\n  -- e.g. INSERT INTO audit_log (table_name, row_id) VALUES ('${table}', NEW.rowid);\n  SELECT 1;\nEND;`;
@@ -300,7 +302,7 @@ export function TriggersView({ session, schema, table, editable }: { session: Se
           >
             <Minus />
           </button>
-          {d === "postgres" && (
+          {(d === "postgres" || d === "mssql") && (
             <button
               className="icon-btn"
               title={sel?.enabled ? "Disable trigger" : "Enable trigger"}
@@ -309,7 +311,11 @@ export function TriggersView({ session, schema, table, editable }: { session: Se
                 sel &&
                 setConfirm({
                   title: `${sel.enabled ? "Disable" : "Enable"} trigger ${sel.name}`,
-                  statements: [`ALTER TABLE ${tq} ${sel.enabled ? "DISABLE" : "ENABLE"} TRIGGER ${quoteIdent(d, sel.name)}`],
+                  statements: [
+                    d === "mssql"
+                      ? `${sel.enabled ? "DISABLE" : "ENABLE"} TRIGGER ${quoteIdent(d, schema)}.${quoteIdent(d, sel.name)} ON ${tq}`
+                      : `ALTER TABLE ${tq} ${sel.enabled ? "DISABLE" : "ENABLE"} TRIGGER ${quoteIdent(d, sel.name)}`,
+                  ],
                   label: sel.enabled ? "Disable" : "Enable",
                 })
               }
@@ -325,7 +331,9 @@ export function TriggersView({ session, schema, table, editable }: { session: Se
               sel &&
               newQuery(
                 session.id,
-                d === "postgres"
+                d === "mssql"
+                  ? sel.definition.trim().replace(/^CREATE\s+TRIGGER/i, "CREATE OR ALTER TRIGGER")
+                  : d === "postgres"
                   ? `-- Recreate the trigger with your changes.\n-- The function it calls can be edited with CREATE OR REPLACE FUNCTION.\n${dropSql(sel)};\n${sel.definition};`
                   : `-- Triggers can't be altered in place: drop and recreate.\n${dropSql(sel)};\n${sel.definition.trim().replace(/;?$/, ";")}`,
               )

@@ -19,6 +19,11 @@ const acct = (d: Driver, u: { name: string; host: string }) =>
 function grantSql(d: Driver, who: string, scope: string, level: Level, revoke = false): string[] {
   const s = quoteIdent(d, scope);
   const privs = level === "read" ? "SELECT" : level === "write" ? "SELECT, INSERT, UPDATE, DELETE" : "ALL PRIVILEGES";
+  // SQL Server grants go to the database user, scoped to a schema.
+  if (d === "mssql")
+    return revoke
+      ? [`REVOKE SELECT, INSERT, UPDATE, DELETE, EXECUTE, CONTROL ON SCHEMA::${s} FROM ${who}`]
+      : [`GRANT ${level === "all" ? "CONTROL" : privs} ON SCHEMA::${s} TO ${who}`];
   if (d === "mysql") return revoke ? [`REVOKE ALL PRIVILEGES ON ${s}.* FROM ${who}`] : [`GRANT ${privs} ON ${s}.* TO ${who}`];
   const pgPrivs = level === "all" ? "ALL" : privs;
   if (revoke)
@@ -38,6 +43,12 @@ function grantSql(d: Driver, who: string, scope: string, level: Level, revoke = 
 }
 
 const MASK = "'•••'";
+
+function passwordSql(d: Driver, who: string, secret: string, contained: boolean): string {
+  if (d === "mysql") return `ALTER USER ${who} IDENTIFIED BY ${secret}`;
+  if (d === "mssql") return contained ? `ALTER USER ${who} WITH PASSWORD = ${secret}` : `ALTER LOGIN ${who} WITH PASSWORD = ${secret}`;
+  return `ALTER ROLE ${who} PASSWORD ${secret}`;
+}
 
 interface Pending {
   title: string;
@@ -63,6 +74,8 @@ export function UsersView({ session, active }: { session: Session; active: boole
   const [scope, setScope] = useState(session.schema);
   const [level, setLevel] = useState<Level>("read");
   const ro = session.connection.readOnly;
+  // Azure SQL Database uses contained users (no server logins).
+  const contained = session.connection.provider === "azuresql";
 
   const keyOf = (u: UserInfo) => `${u.name}@${u.host}`;
   useEffect(() => {
@@ -141,11 +154,15 @@ export function UsersView({ session, active }: { session: Session; active: boole
                 setPending({
                   title: `Delete ${sel.name}`,
                   description:
-                    d === "mysql"
+                    d === "mysql" || d === "mssql"
                       ? "The account can no longer sign in."
                       : "Anything it owns is handed to you first, then its privileges are removed and the role is deleted.",
                   statements:
-                    d === "mysql" ? [`DROP USER ${who}`] : [`REASSIGN OWNED BY ${who} TO CURRENT_USER`, `DROP OWNED BY ${who}`, `DROP ROLE ${who}`],
+                    d === "mysql"
+                      ? [`DROP USER ${who}`]
+                      : d === "mssql"
+                        ? [`DROP USER IF EXISTS ${who}`, ...(contained ? [] : [`DROP LOGIN ${who}`])]
+                        : [`REASSIGN OWNED BY ${who} TO CURRENT_USER`, `DROP OWNED BY ${who}`, `DROP ROLE ${who}`],
                   danger: true,
                   label: "Delete account",
                 })
@@ -179,7 +196,7 @@ export function UsersView({ session, active }: { session: Session; active: boole
                   </h2>
                   <div className="users-badges">
                     {sel.canLogin ? <span className="badge local">can sign in</span> : <span className="badge">group role</span>}
-                    {sel.superuser && <span className="badge production">{d === "mysql" ? "super / grant" : "superuser"}</span>}
+                    {sel.superuser && <span className="badge production">{d === "mysql" ? "super / grant" : d === "mssql" ? (contained ? "db_owner" : "sysadmin") : "superuser"}</span>}
                     {sel.locked && <span className="badge staging">locked</span>}
                     {sel.validUntil && <span className="badge">{sel.validUntil}</span>}
                     {sel.memberOf.map((m) => (
@@ -210,8 +227,8 @@ export function UsersView({ session, active }: { session: Session; active: boole
                         onClick={() =>
                           setPending({
                             title: `Change password for ${sel.name}`,
-                            statements: [d === "mysql" ? `ALTER USER ${who} IDENTIFIED BY ${quoteLiteral(d, newPw)}` : `ALTER ROLE ${who} PASSWORD ${quoteLiteral(d, newPw)}`],
-                            display: [d === "mysql" ? `ALTER USER ${who} IDENTIFIED BY ${MASK}` : `ALTER ROLE ${who} PASSWORD ${MASK}`],
+                            statements: [passwordSql(d, who, quoteLiteral(d, newPw), contained)],
+                            display: [passwordSql(d, who, MASK, contained)],
                             label: "Change password",
                           })
                         }
@@ -229,6 +246,24 @@ export function UsersView({ session, active }: { session: Session; active: boole
                       <Checkbox checked={sel.createDb} disabled={ro} onChange={(v) => attr("CREATEDB", v)} label="Can create databases" />
                       <Checkbox checked={sel.createRole} disabled={ro} onChange={(v) => attr("CREATEROLE", v)} label="Can create roles" />
                       <Checkbox checked={sel.superuser} disabled={ro} onChange={(v) => attr("SUPERUSER", v)} label="Superuser (bypasses every permission)" />
+                    </div>
+                  ) : d === "mssql" ? (
+                    <div className="users-attrs">
+                      {!contained && (
+                        <button
+                          className="btn"
+                          disabled={ro}
+                          onClick={() =>
+                            setPending({
+                              title: `${sel.canLogin ? "Disable" : "Enable"} ${sel.name}`,
+                              statements: [`ALTER LOGIN ${who} ${sel.canLogin ? "DISABLE" : "ENABLE"}`],
+                              label: sel.canLogin ? "Disable" : "Enable",
+                            })
+                          }
+                        >
+                          {sel.canLogin ? <Lock /> : <Unlock />} {sel.canLogin ? "Disable login" : "Enable login"}
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div className="users-attrs">
@@ -304,11 +339,23 @@ function CreateUser({ session, preset, onClose, onDone }: { session: Session; pr
   const [level, setLevel] = useState<Level | "none">(preset === "readonly" ? "read" : "none");
   const u = { name: name.trim(), host };
   const who = acct(d, u);
+  const contained = session.connection.provider === "azuresql";
   const create = (secret: string) =>
-    d === "mysql" ? `CREATE USER ${who} IDENTIFIED BY ${secret}` : `CREATE ROLE ${who} LOGIN PASSWORD ${secret}`;
+    d === "mysql"
+      ? `CREATE USER ${who} IDENTIFIED BY ${secret}`
+      : d === "mssql"
+        ? contained
+          ? `CREATE USER ${who} WITH PASSWORD = ${secret}`
+          : `CREATE LOGIN ${who} WITH PASSWORD = ${secret}`
+        : `CREATE ROLE ${who} LOGIN PASSWORD ${secret}`;
   const grants = level === "none" ? [] : grantSql(d, who, scope, level);
   const ok = !!u.name && pw.length >= 8;
-  const db = d === "postgres" && session.connection.database ? [`GRANT CONNECT ON DATABASE ${quoteIdent(d, session.connection.database)} TO ${who}`] : [];
+  const db =
+    d === "postgres" && session.connection.database
+      ? [`GRANT CONNECT ON DATABASE ${quoteIdent(d, session.connection.database)} TO ${who}`]
+      : d === "mssql" && !contained
+        ? [`CREATE USER ${who} FOR LOGIN ${who}`]
+        : [];
 
   return (
     <SqlConfirm

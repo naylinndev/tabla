@@ -26,6 +26,7 @@ const TYPES: Record<string, string[]> = {
   postgres: ["text", "character varying", "character", "integer", "bigint", "smallint", "serial", "bigserial", "boolean", "numeric", "real", "double precision", "date", "time without time zone", "timestamp without time zone", "timestamp with time zone", "interval", "jsonb", "json", "uuid", "bytea", "inet", "text[]", "integer[]"],
   mysql: ["int", "bigint", "smallint", "tinyint", "mediumint", "decimal", "float", "double", "bit", "varchar", "char", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "json", "enum", "blob", "longblob", "binary", "varbinary"],
   sqlite: ["TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"],
+  mssql: ["int", "bigint", "smallint", "tinyint", "bit", "decimal", "numeric", "money", "float", "real", "nvarchar", "varchar", "nchar", "char", "date", "time", "datetime2", "datetimeoffset", "datetime", "uniqueidentifier", "varbinary", "xml"],
 };
 
 const toDef = (d: Draft): AlterColumn => ({
@@ -296,7 +297,7 @@ export function StructureEditor({
           <span className="sg-count">
             {drafts.filter((d) => !d.dropped).length} columns
             {!mysql && editable && (
-              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
+              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
                 {" "}
                 · <Info size={11} style={{ verticalAlign: -1 }} /> drag sets view order
               </span>
@@ -384,7 +385,7 @@ export function StructureEditor({
           title={`Drop index ${droppingIndex}`}
           description="Queries that relied on it may get slower. Data is not changed."
           statements={[
-            driver === "mysql"
+            driver === "mysql" || driver === "mssql"
               ? `DROP INDEX ${quoteIdent(driver, droppingIndex)} ON ${quoteIdent(driver, schema)}.${quoteIdent(driver, table)}`
               : `DROP INDEX ${quoteIdent(driver, schema)}.${quoteIdent(driver, droppingIndex)}`,
           ]}

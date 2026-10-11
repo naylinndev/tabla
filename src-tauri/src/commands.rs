@@ -192,9 +192,14 @@ pub fn scan_env_dir(dir: &Path) -> AppResult<Vec<EnvUrl>> {
             let Some((key, value)) = line.split_once('=') else { continue };
             let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
             let lower = value.to_ascii_lowercase();
-            let is_db = ["postgres://", "postgresql://", "mysql://", "mariadb://", "sqlite:", "file:"]
-                .iter()
-                .any(|p| lower.starts_with(p));
+            let is_db = [
+                "postgres://", "postgresql://", "mysql://", "mariadb://", "sqlite:", "file:", "redis://", "rediss://",
+                "sqlserver://", "mssql://", "jdbc:sqlserver://",
+            ]
+            .iter()
+            .any(|p| lower.starts_with(p))
+                // ADO.NET style: Server=…;Database=…;User Id=…
+                || ((lower.starts_with("server=") || lower.starts_with("data source=")) && lower.contains(';'));
             if is_db {
                 found.push(EnvUrl { file: name.clone(), key: key.trim().to_string(), url: value.to_string() });
             }

@@ -2,7 +2,7 @@ import { api } from "./api";
 import { providerById } from "./providers";
 import type { Session } from "./store";
 
-const ENGINE = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis" } as const;
+const ENGINE = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server" } as const;
 
 export function engineLabel(s: Session) {
   const p = providerById(s.connection.provider, s.connection.driver);

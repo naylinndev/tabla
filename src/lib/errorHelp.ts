@@ -14,7 +14,24 @@ export function explainError(raw: string, provider?: Provider): ErrorHelp | null
   const hosted = provider && provider.group === "Cloud & hosted";
   const where = provider ? `${provider.label}'s dashboard` : "your provider's dashboard";
 
-  if (/password authentication failed|access denied for user|authentication failed|invalid password/.test(m))
+  if (/is not allowed to access the server/.test(m))
+    return {
+      title: "Your IP address isn't allowed by the server's firewall",
+      tips: [
+        "In the Azure portal, open the SQL server (not the database), then Networking.",
+        "Click Add your client IPv4 address under Firewall rules and save. It can take a minute to apply.",
+        "On a changing IP (home or mobile networks), add a range or connect through a VPN or SSH tunnel instead.",
+      ],
+    };
+  if (/cannot open database .* requested by the login/.test(m))
+    return {
+      title: "That database doesn't exist, or this login can't open it",
+      tips: [
+        "Check the database name for typos, or leave it as master to see what's available.",
+        "The login may need a user in that database: CREATE USER [name] FOR LOGIN [name].",
+      ],
+    };
+  if (/password authentication failed|access denied for user|authentication failed|invalid password|login failed for user/.test(m))
     return {
       title: "Wrong user name or password",
       tips: [
@@ -33,7 +50,7 @@ export function explainError(raw: string, provider?: Provider): ErrorHelp | null
       tips: [
         "The database server is not running, or the host or port is wrong.",
         "Local databases: start the server (Homebrew: brew services list; Docker: docker ps).",
-        `Check the port: PostgreSQL uses 5432 and MySQL 3306${provider ? `; ${provider.label} uses ${provider.port}` : ""}.`,
+        `Check the port: PostgreSQL uses 5432, MySQL 3306 and SQL Server 1433${provider ? `; ${provider.label} uses ${provider.port}` : ""}.`,
       ],
     };
   if (/failed to lookup address|nodename nor servname|name or service not known|no such host|dns/.test(m))

@@ -177,6 +177,7 @@ fn list_connections() -> AppResult<String> {
                 config::Driver::Mysql => "MySQL",
                 config::Driver::Sqlite => "SQLite",
                 config::Driver::Redis => "Redis",
+                config::Driver::Mssql => "SQL Server",
             };
             let provider = if c.provider.is_empty() || c.provider == format!("{:?}", c.driver).to_lowercase() {
                 String::new()

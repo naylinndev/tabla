@@ -4,7 +4,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
-import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { format as formatSql } from "sql-formatter";
 import {
   AlertTriangle,
@@ -51,7 +51,7 @@ const baseTheme = EditorView.theme({
   ".cm-gutterElement": { padding: "0 6px 0 14px !important" },
 });
 
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL };
 
 export function QueryView({ session, tab, active }: { session: Session; tab: QueryTab; active: boolean }) {
   const updateTab = useApp((s) => s.updateTab);
@@ -157,7 +157,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
           ? doc
           : !sel.empty
             ? view.state.sliceDoc(sel.from, sel.to)
-            : statementAt(doc, sel.head);
+            : statementAt(doc, sel.head, session.connection.driver);
       if (!text.trim()) return;
       lastSql.current = text;
       setRunning(true);
@@ -196,7 +196,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
     if (!view) return;
     try {
       const d = session.connection.driver;
-      const lang = d === "postgres" ? "postgresql" : d === "mysql" ? "mysql" : "sqlite";
+      const lang = d === "postgres" ? "postgresql" : d === "mysql" ? "mysql" : d === "mssql" ? "transactsql" : "sqlite";
       const out = formatSql(view.state.doc.toString(), { language: lang, keywordCase: "upper", tabWidth: 2 });
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: out } });
     } catch (e) {
@@ -260,7 +260,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
   }, [active]);
 
   const result = outcome?.results[resultIdx];
-  const statementCount = useMemo(() => splitStatements(tab.sql).length, [tab.sql]);
+  const statementCount = useMemo(() => splitStatements(tab.sql, session.connection.driver).length, [tab.sql, session.connection.driver]);
   const columns = useMemo(
     () => result?.columns.map((c) => ({ name: c.name, typeName: c.typeName })) ?? [],
     [result],

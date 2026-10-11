@@ -15,6 +15,7 @@ mod config;
 mod db;
 mod error;
 mod mcp;
+mod mssql;
 mod redis_db;
 mod ssh;
 mod updates;

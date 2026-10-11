@@ -16,10 +16,13 @@ function buildSql(d: Driver, schema: string, t: TableInfo, action: Action, targe
   const to = q(d, schema, target);
   switch (action) {
     case "rename":
+      if (d === "mssql") return [`EXEC sp_rename N'${from.replace(/'/g, "''")}', N'${target.replace(/'/g, "''")}'`];
       return d === "mysql" ? [`RENAME TABLE ${from} TO ${to}`] : [`ALTER TABLE ${from} RENAME TO ${quoteIdent(d, target)}`];
     case "duplicate":
       if (d === "postgres") return [`CREATE TABLE ${to} (LIKE ${from} INCLUDING ALL)`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
       if (d === "mysql") return [`CREATE TABLE ${to} LIKE ${from}`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
+      // Copies columns and identity; keys and indexes are not copied.
+      if (d === "mssql") return [`SELECT * INTO ${to} FROM ${from}${withData ? "" : " WHERE 1 = 0"}`];
       return [`CREATE TABLE ${to} AS SELECT * FROM ${from}${withData ? "" : " WHERE 0"}`];
     case "truncate":
       return d === "sqlite" ? [`DELETE FROM ${from}`] : [`TRUNCATE TABLE ${from}`];
@@ -114,7 +117,8 @@ function TableActionDialog({ session, action, table, onClose }: { session: Sessi
     setBusy(true);
     setError(null);
     try {
-      const script = d === "mysql" || stmts.length === 1 ? stmts.join(";\n") : `BEGIN;\n${stmts.join(";\n")};\nCOMMIT`;
+      const begin = d === "mssql" ? "BEGIN TRAN" : "BEGIN";
+      const script = d === "mysql" || stmts.length === 1 ? stmts.join(";\n") : `${begin};\n${stmts.join(";\n")};\nCOMMIT`;
       await api.runQuery(session.id, script);
       const st = useApp.getState();
       if (action === "rename" || action === "drop") {

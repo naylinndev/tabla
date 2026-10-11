@@ -24,7 +24,7 @@ tauri = { version = "2", features = ["macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sqlx = { version = "0.9.0", features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite"] }
-tokio = { version = "1.53.2", features = ["io-std", "io-util", "macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.53.2", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 futures-util = "0.3.34"
 uuid = { version = "1.28.0", features = ["v4"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
@@ -35,6 +35,9 @@ russh = "0.64.1"
 redis = { version = "1.7.1", features = ["tokio-comp", "connection-manager", "tokio-rustls-comp"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 tauri-plugin-opener = "2"
+tiberius = { version = "0.13.0", default-features = false, features = ["rustls", "tds73", "chrono"] }
+tokio-util = { version = "0.7.20", features = ["compat"] }
+chrono = "0.4.45"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

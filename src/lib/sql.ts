@@ -1,13 +1,16 @@
 import type { ColumnMeta, Driver, ResultSet } from "./api";
 
 export function quoteIdent(driver: Driver, s: string): string {
-  return driver === "mysql" ? "`" + s.replace(/`/g, "``") + "`" : '"' + s.replace(/"/g, '""') + '"';
+  if (driver === "mysql") return "`" + s.replace(/`/g, "``") + "`";
+  if (driver === "mssql") return "[" + s.replace(/]/g, "]]") + "]";
+  return '"' + s.replace(/"/g, '""') + '"';
 }
 
 export function quoteLiteral(driver: Driver, s: string): string {
   let v = s.replace(/'/g, "''");
   if (driver === "mysql") v = v.replace(/\\/g, "\\\\");
-  return `'${v}'`;
+  // N'' keeps non-ASCII text intact on SQL Server.
+  return driver === "mssql" ? `N'${v}'` : `'${v}'`;
 }
 
 export type FilterOp =
@@ -38,8 +41,9 @@ export interface Filter {
   enabled: boolean;
 }
 
-function likeEscape(v: string) {
-  return v.replace(/[\\%_]/g, (m) => "\\" + m);
+function likeEscape(v: string, driver?: Driver) {
+  // SQL Server also treats [ as a wildcard (character ranges).
+  return v.replace(driver === "mssql" ? /[\\%_[]/g : /[\\%_]/g, (m) => "\\" + m);
 }
 
 export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR" = "AND"): string {
@@ -57,11 +61,11 @@ export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR
         case "is not null":
           return `${col} IS NOT NULL`;
         case "contains":
-          return `${asText} ${like} ${lit(`%${likeEscape(f.value)}%`)}${esc}`;
+          return `${asText} ${like} ${lit(`%${likeEscape(f.value, driver)}%`)}${esc}`;
         case "not contains":
-          return `${asText} NOT ${like} ${lit(`%${likeEscape(f.value)}%`)}${esc}`;
+          return `${asText} NOT ${like} ${lit(`%${likeEscape(f.value, driver)}%`)}${esc}`;
         case "starts with":
-          return `${asText} ${like} ${lit(`${likeEscape(f.value)}%`)}${esc}`;
+          return `${asText} ${like} ${lit(`${likeEscape(f.value, driver)}%`)}${esc}`;
         case "in": {
           const items = f.value.split(",").map((s) => s.trim()).filter(Boolean);
           return items.length ? `${col} IN (${items.map(lit).join(", ")})` : "1=0";
@@ -82,7 +86,8 @@ export const isJsonType = (t: string) => /json/i.test(t);
  * Splits a script into statements, respecting quotes, comments and
  * Postgres dollar-quoting. Returns each statement with its offsets.
  */
-export function splitStatements(sql: string): { text: string; from: number; to: number }[] {
+export function splitStatements(sql: string, driver?: Driver): { text: string; from: number; to: number }[] {
+  if (driver === "mssql") return splitBatches(sql);
   const out: { text: string; from: number; to: number }[] = [];
   let start = 0;
   let i = 0;
@@ -129,8 +134,31 @@ export function splitStatements(sql: string): { text: string; from: number; to: 
   return out;
 }
 
-export function statementAt(sql: string, pos: number): string {
-  const stmts = splitStatements(sql);
+/**
+ * T-SQL scripts are split into batches on lines that hold only GO (as in
+ * SSMS); semicolons inside BEGIN…END bodies stay part of their batch.
+ */
+function splitBatches(sql: string): { text: string; from: number; to: number }[] {
+  const out: { text: string; from: number; to: number }[] = [];
+  const re = /^[ \t]*GO[ \t]*(?:--.*)?$/gim;
+  let start = 0;
+  const push = (end: number) => {
+    const raw = sql.slice(start, end);
+    if (raw.trim()) {
+      const lead = raw.length - raw.trimStart().length;
+      out.push({ text: raw.trim(), from: start + lead, to: start + lead + raw.trim().length });
+    }
+  };
+  for (let m = re.exec(sql); m; m = re.exec(sql)) {
+    push(m.index);
+    start = m.index + m[0].length;
+  }
+  push(sql.length);
+  return out;
+}
+
+export function statementAt(sql: string, pos: number, driver?: Driver): string {
+  const stmts = splitStatements(sql, driver);
   if (!stmts.length) return "";
   // Prefer the statement containing the cursor, else the closest one before it.
   const hit = stmts.find((s) => pos >= s.from && pos <= s.to + 1);

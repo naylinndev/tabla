@@ -48,6 +48,27 @@ impl Session {
                 )
                 .await
                 .map_err(|e| AppError::msg(format!("Can't list accounts: {e}. Your user needs SELECT on mysql.user.")))?,
+            Driver::Mssql => {
+                let logins = "SELECT p.name, '', CASE WHEN p.is_disabled = 0 THEN '1' ELSE '0' END, \
+                     CASE WHEN IS_SRVROLEMEMBER('sysadmin', p.name) = 1 THEN '1' ELSE '0' END, \
+                     CASE WHEN IS_SRVROLEMEMBER('sysadmin', p.name) = 1 OR IS_SRVROLEMEMBER('dbcreator', p.name) = 1 THEN '1' ELSE '0' END, \
+                     CASE WHEN IS_SRVROLEMEMBER('sysadmin', p.name) = 1 OR IS_SRVROLEMEMBER('securityadmin', p.name) = 1 THEN '1' ELSE '0' END, \
+                     CASE WHEN LOGINPROPERTY(p.name, 'IsLocked') = 1 THEN '1' ELSE '0' END, NULL, \
+                     (SELECT STRING_AGG(r.name, ', ') FROM sys.server_role_members m JOIN sys.server_principals r ON r.principal_id = m.role_principal_id \
+                       WHERE m.member_principal_id = p.principal_id) \
+                     FROM sys.server_principals p WHERE p.type IN ('S', 'U', 'G', 'E', 'X') AND p.name NOT LIKE '##%' ORDER BY p.name";
+                // Azure SQL Database has no server logins inside a user database: list its users instead.
+                let users = "SELECT p.name, '', '1', CASE WHEN IS_ROLEMEMBER('db_owner', p.name) = 1 THEN '1' ELSE '0' END, '0', \
+                     CASE WHEN IS_ROLEMEMBER('db_securityadmin', p.name) = 1 THEN '1' ELSE '0' END, '0', NULL, \
+                     (SELECT STRING_AGG(r.name, ', ') FROM sys.database_role_members m JOIN sys.database_principals r ON r.principal_id = m.role_principal_id \
+                       WHERE m.member_principal_id = p.principal_id) \
+                     FROM sys.database_principals p WHERE p.type IN ('S', 'U', 'G', 'E', 'X') \
+                     AND p.name NOT IN ('guest', 'INFORMATION_SCHEMA', 'sys') ORDER BY p.name";
+                match self.run_script(logins, 10_000).await {
+                    Ok(r) if r.first().is_some_and(|s| !s.rows.is_empty()) => r,
+                    _ => self.run_script(users, 10_000).await?,
+                }
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };
@@ -98,6 +119,20 @@ impl Session {
                 )
             }
             Driver::Mysql => format!("SHOW GRANTS FOR {}@{}", d.quote_literal(name), d.quote_literal(host)),
+            Driver::Mssql => {
+                let r = d.quote_literal(name);
+                format!(
+                    "SELECT pe.state_desc + ' ' + pe.permission_name + CASE pe.class WHEN 0 THEN ' ON DATABASE::' + QUOTENAME(DB_NAME()) \
+                       WHEN 1 THEN ' ON ' + QUOTENAME(OBJECT_SCHEMA_NAME(pe.major_id)) + '.' + QUOTENAME(OBJECT_NAME(pe.major_id)) \
+                       WHEN 3 THEN ' ON SCHEMA::' + QUOTENAME(SCHEMA_NAME(pe.major_id)) ELSE '' END \
+                     FROM sys.database_permissions pe JOIN sys.database_principals dp ON dp.principal_id = pe.grantee_principal_id \
+                     WHERE dp.name = {r} OR dp.sid = SUSER_SID({r}) \
+                     UNION ALL \
+                     SELECT 'Member of database role ' + r.name FROM sys.database_role_members m \
+                     JOIN sys.database_principals r ON r.principal_id = m.role_principal_id \
+                     JOIN sys.database_principals u ON u.principal_id = m.member_principal_id WHERE u.name = {r} OR u.sid = SUSER_SID({r})"
+                )
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };

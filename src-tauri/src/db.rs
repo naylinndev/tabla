@@ -28,6 +28,7 @@ pub enum Pool {
     Pg(PgPool),
     My(MySqlPool),
     Lite(SqlitePool),
+    Ms(crate::mssql::MsPool),
 }
 
 /// One statement Tabla sent to the server (Console view). Memory only.
@@ -50,6 +51,7 @@ const LOG_SQL_MAX: usize = 4000;
 enum Cancel {
     Pg(String),
     My(String),
+    Ms(String),
 }
 
 pub struct Session {
@@ -349,6 +351,7 @@ impl Session {
                 }
                 Pool::My(po.connect_with(o).await?)
             }
+            Driver::Mssql => Pool::Ms(crate::mssql::MsPool::connect(crate::mssql::build_config(cfg, host, port, db_host, password.clone())).await?),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 if cfg.database.trim().is_empty() {
@@ -370,6 +373,7 @@ impl Session {
             Pool::Pg(p) => p.close().await,
             Pool::My(p) => p.close().await,
             Pool::Lite(p) => p.close().await,
+            Pool::Ms(p) => p.close().await,
         }
     }
 
@@ -429,6 +433,10 @@ impl Session {
             Pool::Pg(p) => collect(raw().fetch_many(p), max_rows, |q| q.rows_affected(), pg_cell).await?,
             Pool::My(p) => collect(raw().fetch_many(p), max_rows, |q| q.rows_affected(), my_cell).await?,
             Pool::Lite(p) => collect(raw().fetch_many(p), max_rows, |q| q.rows_affected(), lite_cell).await?,
+            Pool::Ms(p) => {
+                let mut conn = p.acquire().await?;
+                self.ms_script(&mut conn, sql, max_rows, None).await?
+            }
         };
 
         // A SELECT with zero rows carries no column metadata; ask the server.
@@ -468,6 +476,20 @@ impl Session {
                     self.running.lock().unwrap().remove(query_id);
                     out?
                 }
+                Pool::Ms(p) => {
+                    let mut conn = p.acquire().await?;
+                    let spid = crate::mssql::run(&mut conn, "SELECT CAST(@@SPID AS varchar(10))", 1, None).await?;
+                    let spid = spid.first().and_then(|s| s.rows.first()).and_then(|r| r.first().cloned().flatten()).unwrap_or_default();
+                    self.running.lock().unwrap().insert(query_id.into(), Cancel::Ms(spid));
+                    let out = self.ms_script(&mut conn, sql, max_rows, progress).await;
+                    // `cancel` removes the entry when it kills the session.
+                    let killed = self.running.lock().unwrap().remove(query_id).is_none();
+                    if killed {
+                        conn.discard();
+                        return Err(AppError::msg("Query cancelled"));
+                    }
+                    out?
+                }
                 // SQLite runs in-process; queries are local and cannot be interrupted from here.
                 Pool::Lite(p) => collect_with(raw().fetch_many(p), max_rows, |q| q.rows_affected(), lite_cell, progress).await?,
             })
@@ -501,10 +523,20 @@ impl Session {
 
     /// Asks the server to stop a running query. Returns false if it already finished.
     pub async fn cancel(&self, query_id: &str) -> AppResult<bool> {
-        let handle = match self.running.lock().unwrap().get(query_id) {
-            Some(Cancel::Pg(pid)) => Some(format!("SELECT pg_cancel_backend({})", pid.parse::<i64>().unwrap_or(0))),
-            Some(Cancel::My(id)) => Some(format!("KILL QUERY {}", id.parse::<u64>().unwrap_or(0))),
-            None => None,
+        let handle = {
+            let mut running = self.running.lock().unwrap();
+            match running.get(query_id) {
+                Some(Cancel::Pg(pid)) => Some(format!("SELECT pg_cancel_backend({})", pid.parse::<i64>().unwrap_or(0))),
+                Some(Cancel::My(id)) => Some(format!("KILL QUERY {}", id.parse::<u64>().unwrap_or(0))),
+                // SQL Server can only stop a query by ending its session. Unregister
+                // first so the dying query reports "Query cancelled".
+                Some(Cancel::Ms(id)) => {
+                    let sql = format!("KILL {}", id.parse::<u64>().unwrap_or(0));
+                    running.remove(query_id);
+                    Some(sql)
+                }
+                None => None,
+            }
         };
         let Some(sql) = handle else { return Ok(false) };
         match &self.pool {
@@ -515,6 +547,10 @@ impl Session {
                 p.execute(AssertSqlSafe(sql)).await?;
             }
             Pool::Lite(_) => return Ok(false),
+            Pool::Ms(p) => {
+                let mut conn = p.acquire().await?;
+                crate::mssql::run(&mut conn, &sql, 0, None).await?;
+            }
         }
         Ok(true)
     }
@@ -530,6 +566,8 @@ impl Session {
             Pool::Pg(p) => meta(p.describe(s).await.ok()?.columns()),
             Pool::My(p) => meta(p.describe(s).await.ok()?.columns()),
             Pool::Lite(p) => meta(p.describe(s).await.ok()?.columns()),
+            // SQL Server sends column metadata even for empty results.
+            Pool::Ms(_) => return None,
         };
         (!cols.is_empty()).then_some(cols)
     }
@@ -542,6 +580,7 @@ impl Session {
         let sql = match self.driver {
             Driver::Postgres => "SHOW server_version",
             Driver::Mysql => "SELECT VERSION()",
+            Driver::Mssql => "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)) + N' ' + CAST(SERVERPROPERTY('Edition') AS nvarchar(128))",
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT sqlite_version()",
         };
@@ -559,6 +598,10 @@ impl Session {
                 "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN \
                  ('information_schema','mysql','performance_schema','sys') ORDER BY SCHEMA_NAME"
             }
+            Driver::Mssql => {
+                "SELECT name FROM sys.schemas WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest') AND name NOT LIKE 'db[_]%' \
+                 ORDER BY CASE WHEN name = 'dbo' THEN 0 ELSE 1 END, name"
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT name FROM pragma_database_list ORDER BY seq",
         };
@@ -569,6 +612,7 @@ impl Session {
         let sql = match self.driver {
             Driver::Postgres => "SELECT current_schema()",
             Driver::Mysql => "SELECT DATABASE()",
+            Driver::Mssql => "SELECT SCHEMA_NAME()",
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Ok(Some("main".into())),
         };
@@ -588,6 +632,10 @@ impl Session {
                 "SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS FROM information_schema.TABLES \
                  WHERE TABLE_SCHEMA = {lit} ORDER BY TABLE_NAME"
             ),
+            Driver::Mssql => format!(
+                "SELECT o.name, RTRIM(o.type), (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
+                 FROM sys.objects o WHERE o.schema_id = SCHEMA_ID({lit}) AND o.type IN ('U', 'V') ORDER BY o.name"
+            ),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
                 "SELECT name, type, NULL FROM {}.sqlite_master WHERE type IN ('table','view') \
@@ -603,7 +651,7 @@ impl Session {
                 let name = it.next().flatten()?;
                 let raw_kind = it.next().flatten().unwrap_or_default();
                 let kind = match raw_kind.as_str() {
-                    "v" | "VIEW" | "SYSTEM VIEW" | "view" => "view",
+                    "v" | "V" | "VIEW" | "SYSTEM VIEW" | "view" => "view",
                     "m" => "materialized",
                     "f" => "foreign",
                     _ => "table",
@@ -650,6 +698,34 @@ impl Session {
                 );
                 self.text_rows(&sql).await?.into_iter().map(|r| column_from(r, |v| v == "YES", |v| v == "PRI")).collect()
             }
+            Driver::Mssql => {
+                let obj = d.quote_literal(&d.qualified(schema, table));
+                let sql = format!(
+                    "SELECT c.name, {MS_TYPE}, CASE WHEN c.is_nullable = 1 THEN '1' ELSE '0' END, dc.definition, \
+                     CASE WHEN pk.column_id IS NULL THEN '0' ELSE '1' END, \
+                     CASE WHEN pk.column_id IS NOT NULL THEN 'PRI' WHEN uq.column_id IS NOT NULL THEN 'UNI' \
+                          WHEN ix.column_id IS NOT NULL THEN 'MUL' ELSE '' END, \
+                     CASE WHEN c.is_identity = 1 THEN 'identity' WHEN c.is_computed = 1 THEN 'generated' ELSE '' END \
+                     FROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id \
+                     LEFT JOIN sys.default_constraints dc ON dc.object_id = c.default_object_id \
+                     OUTER APPLY (SELECT TOP 1 ic.column_id FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+                       WHERE i.object_id = c.object_id AND i.is_primary_key = 1 AND ic.column_id = c.column_id) pk \
+                     OUTER APPLY (SELECT TOP 1 ic.column_id FROM sys.indexes i JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+                       WHERE i.object_id = c.object_id AND i.is_unique = 1 AND ic.column_id = c.column_id \
+                       AND (SELECT COUNT(*) FROM sys.index_columns x WHERE x.object_id = i.object_id AND x.index_id = i.index_id AND x.is_included_column = 0) = 1) uq \
+                     OUTER APPLY (SELECT TOP 1 ic.column_id FROM sys.index_columns ic WHERE ic.object_id = c.object_id AND ic.column_id = c.column_id) ix \
+                     WHERE c.object_id = OBJECT_ID({obj}) ORDER BY c.column_id"
+                );
+                self.text_rows(&sql)
+                    .await?
+                    .into_iter()
+                    .map(|r| {
+                        let mut c = column_from(r, |v| v == "1", |v| v == "1");
+                        c.default_value = c.default_value.map(|v| unwrap_parens(&v).to_string());
+                        c
+                    })
+                    .collect()
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let sql = format!(
@@ -675,6 +751,15 @@ impl Session {
                  IF(INDEX_NAME = 'PRIMARY', '1', '0'), LOWER(INDEX_TYPE), GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ') \
                  FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = {s} AND TABLE_NAME = {t} \
                  GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME"
+            ),
+            Driver::Mssql => format!(
+                "SELECT i.name, CASE WHEN i.is_primary_key = 1 THEN 'PRIMARY KEY ' WHEN i.is_unique = 1 THEN 'UNIQUE ' ELSE '' END \
+                   + i.type_desc + ' (' + x.cols + ')', CASE WHEN i.is_unique = 1 THEN '1' ELSE '0' END, \
+                 CASE WHEN i.is_primary_key = 1 THEN '1' ELSE '0' END, LOWER(i.type_desc), x.cols \
+                 FROM sys.indexes i CROSS APPLY (SELECT STRING_AGG(COL_NAME(ic.object_id, ic.column_id), ', ') WITHIN GROUP (ORDER BY ic.key_ordinal) AS cols \
+                   FROM sys.index_columns ic WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id AND ic.is_included_column = 0) x \
+                 WHERE i.object_id = OBJECT_ID({}) AND i.type > 0 ORDER BY i.is_primary_key DESC, i.name",
+                d.quote_literal(&d.qualified(schema, table))
             ),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
@@ -721,6 +806,13 @@ impl Session {
             Driver::Mysql => Some(format!(
                 "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IF(COLUMN_KEY = 'PRI', '1', '0') FROM information_schema.COLUMNS \
                  WHERE TABLE_SCHEMA = {s} ORDER BY TABLE_NAME, ORDINAL_POSITION"
+            )),
+            Driver::Mssql => Some(format!(
+                "SELECT o.name, c.name, {MS_TYPE}, CASE WHEN EXISTS (SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic \
+                   ON ic.object_id = i.object_id AND ic.index_id = i.index_id WHERE i.object_id = c.object_id AND i.is_primary_key = 1 \
+                   AND ic.column_id = c.column_id) THEN '1' ELSE '0' END \
+                 FROM sys.columns c JOIN sys.objects o ON o.object_id = c.object_id JOIN sys.types t ON t.user_type_id = c.user_type_id \
+                 WHERE o.schema_id = SCHEMA_ID({s}) AND o.type IN ('U', 'V') ORDER BY o.name, c.column_id"
             )),
             Driver::Sqlite => None,
             Driver::Redis => return Err(crate::error::not_sql()),
@@ -771,6 +863,7 @@ impl Session {
         let sql = match d {
             Driver::Postgres => format!("{PG_FK_BASE} AND n.nspname = {s} ORDER BY 3, 1"),
             Driver::Mysql => format!("{MY_FK_BASE} AND k.TABLE_SCHEMA = {s} {MY_FK_GROUP} ORDER BY 3, 1"),
+            Driver::Mssql => format!("{MS_FK_BASE} AND fk.schema_id = SCHEMA_ID({s}) ORDER BY 3, 1"),
             _ => return Ok(vec![]),
         };
         Ok(parse_fks(self.text_rows(&sql).await?, d == Driver::Postgres))
@@ -796,6 +889,13 @@ impl Session {
                         .await?,
                         false,
                     ),
+                )
+            }
+            Driver::Mssql => {
+                let obj = d.quote_literal(&d.qualified(schema, table));
+                (
+                    parse_fks(self.text_rows(&format!("{MS_FK_BASE} AND fk.parent_object_id = OBJECT_ID({obj}) ORDER BY 1")).await?, false),
+                    parse_fks(self.text_rows(&format!("{MS_FK_BASE} AND fk.referenced_object_id = OBJECT_ID({obj}) ORDER BY 2, 3, 1")).await?, false),
                 )
             }
             Driver::Redis => return Err(crate::error::not_sql()),
@@ -836,6 +936,13 @@ impl Session {
                  CONCAT('CREATE TRIGGER `', TRIGGER_NAME, '` ', ACTION_TIMING, ' ', EVENT_MANIPULATION, ' ON `', EVENT_OBJECT_TABLE, \
                    '` FOR EACH ROW ', ACTION_STATEMENT) \
                  FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = {s} AND EVENT_OBJECT_TABLE = {t} ORDER BY ACTION_ORDER"
+            ),
+            Driver::Mssql => format!(
+                "SELECT tr.name, CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END, \
+                 (SELECT STRING_AGG(te.type_desc, ', ') FROM sys.trigger_events te WHERE te.object_id = tr.object_id), \
+                 CASE WHEN tr.is_disabled = 0 THEN '1' ELSE '0' END, OBJECT_DEFINITION(tr.object_id) \
+                 FROM sys.triggers tr WHERE tr.parent_id = OBJECT_ID({}) ORDER BY tr.name",
+                d.quote_literal(&d.qualified(schema, table))
             ),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => format!(
@@ -957,6 +1064,56 @@ impl Session {
                 let ddl = first(self.text_rows(&format!("SHOW CREATE TABLE {}", d.qualified(schema, table))).await?);
                 out.ddl = ddl.into_iter().nth(1).flatten();
             }
+            Driver::Mssql => {
+                let obj = d.quote_literal(&d.qualified(schema, table));
+                let pages = |cond: &str| {
+                    format!(
+                        "(SELECT CAST(SUM(CAST(a.{cond} AS bigint)) * 8192 AS varchar(30)) FROM sys.partitions p \
+                         JOIN sys.allocation_units a ON a.container_id = p.partition_id WHERE p.object_id = o.object_id"
+                    )
+                };
+                let r = first(
+                    self.text_rows(&format!(
+                        "SELECT (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)), \
+                         {}), CONVERT(varchar(23), o.create_date, 121), CONVERT(varchar(23), o.modify_date, 121), \
+                         (SELECT CAST(ep.value AS nvarchar(4000)) FROM sys.extended_properties ep WHERE ep.class = 1 AND ep.major_id = o.object_id \
+                           AND ep.minor_id = 0 AND ep.name = 'MS_Description'), \
+                         CAST(DATABASEPROPERTYEX(DB_NAME(), 'Collation') AS nvarchar(128)), RTRIM(o.type), \
+                         {} AND p.index_id IN (0, 1)), {} AND p.index_id > 1), \
+                         (SELECT COUNT(*) FROM sys.indexes i WHERE i.object_id = o.object_id AND i.type > 0), \
+                         (SELECT CAST(IDENT_CURRENT({obj}) AS varchar(30))) \
+                         FROM sys.objects o WHERE o.object_id = OBJECT_ID({obj})",
+                        pages("total_pages"),
+                        pages("used_pages"),
+                        pages("used_pages")
+                    ))
+                    .await?,
+                );
+                let mut it = r.into_iter();
+                let mut v = || it.next().flatten();
+                out.rows_estimate = num(v());
+                out.total_bytes = num(v());
+                out.created = v();
+                out.updated = v();
+                out.comment = v();
+                out.collation = v();
+                let kind = v().unwrap_or_default();
+                out.engine = Some("SQL Server".into());
+                out.stats = [
+                    stat("Data size", v(), "bytes"),
+                    stat("Index size", v(), "bytes"),
+                    stat("Indexes", v(), "number"),
+                    stat("Identity", v(), "number"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                out.ddl = Some(if kind == "V" {
+                    first(self.text_rows(&format!("SELECT OBJECT_DEFINITION(OBJECT_ID({obj}))")).await?).into_iter().next().flatten().unwrap_or_default()
+                } else {
+                    self.pg_ddl(schema, table).await?
+                });
+            }
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
                 let q = d.quote_ident(schema);
@@ -972,7 +1129,7 @@ impl Session {
         Ok(out)
     }
 
-    /// Reconstructs a readable CREATE TABLE for Postgres (columns, primary key, indexes).
+    /// Reconstructs a readable CREATE TABLE for Postgres and SQL Server (columns, primary key, indexes).
     async fn pg_ddl(&self, schema: &str, table: &str) -> AppResult<String> {
         let d = self.driver;
         let st = self.table_structure(schema, table).await?;
@@ -981,6 +1138,9 @@ impl Session {
             .iter()
             .map(|c| {
                 let mut l = format!("  {} {}", d.quote_ident(&c.name), c.data_type);
+                if d == Driver::Mssql && c.extra == "identity" {
+                    l.push_str(" IDENTITY(1,1)");
+                }
                 if !c.nullable {
                     l.push_str(" NOT NULL");
                 }
@@ -996,7 +1156,13 @@ impl Session {
         }
         let mut ddl = format!("CREATE TABLE {} (\n{}\n);", d.qualified(schema, table), lines.join(",\n"));
         for i in st.indexes.iter().filter(|i| !i.primary) {
-            ddl.push_str(&format!("\n{};", i.definition));
+            if d == Driver::Mssql {
+                let cols: Vec<String> = i.columns.split(", ").map(|c| d.quote_ident(c)).collect();
+                let unique = if i.unique { "UNIQUE " } else { "" };
+                ddl.push_str(&format!("\nCREATE {unique}INDEX {} ON {} ({});", d.quote_ident(&i.name), d.qualified(schema, table), cols.join(", ")));
+            } else {
+                ddl.push_str(&format!("\n{};", i.definition));
+            }
         }
         Ok(ddl)
     }
@@ -1019,10 +1185,19 @@ impl Session {
                     .filter(|c| c.primary_key)
                     .map(|c| d.quote_ident(&c.name))
                     .collect();
-                if pks.is_empty() { String::new() } else { format!(" ORDER BY {}", pks.join(", ")) }
+                if pks.is_empty() {
+                    // SQL Server's OFFSET/FETCH needs an ORDER BY.
+                    if d == Driver::Mssql { " ORDER BY (SELECT NULL)".into() } else { String::new() }
+                } else {
+                    format!(" ORDER BY {}", pks.join(", "))
+                }
             }
         };
-        let sql = format!("SELECT * FROM {from}{where_sql}{order_sql} LIMIT {} OFFSET {}", a.limit, a.offset);
+        let sql = if d == Driver::Mssql {
+            format!("SELECT * FROM {from}{where_sql}{order_sql} OFFSET {} ROWS FETCH NEXT {} ROWS ONLY", a.offset, a.limit)
+        } else {
+            format!("SELECT * FROM {from}{where_sql}{order_sql} LIMIT {} OFFSET {}", a.limit, a.offset)
+        };
 
         let mut sets = self.run_script(&sql, a.limit as usize).await?;
         let mut result = if sets.is_empty() { ResultSet::default() } else { sets.swap_remove(0) };
@@ -1069,6 +1244,27 @@ impl Session {
             Pool::Pg(p) => guarded!(p, "BEGIN READ ONLY", "SET LOCAL statement_timeout = 15000", pg_cell),
             Pool::My(p) => guarded!(p, "START TRANSACTION READ ONLY", "SET SESSION MAX_EXECUTION_TIME = 15000", my_cell),
             Pool::Lite(p) => guarded!(p, "BEGIN", "SELECT 1", lite_cell),
+            // SQL Server has no read-only transactions: the statement is
+            // validated by ai_guard, then run in a transaction that is
+            // always rolled back, with a client-side timeout.
+            Pool::Ms(p) => {
+                let mut conn = p.acquire().await?;
+                crate::mssql::run(&mut conn, "SET LOCK_TIMEOUT 15000; BEGIN TRAN; SELECT 1", 1, None).await?;
+                let out = tokio::time::timeout(Duration::from_secs(15), crate::mssql::run(&mut conn, sql, max_rows, None)).await;
+                match out {
+                    Ok(res) => {
+                        let rolled_back = crate::mssql::run(&mut conn, "IF @@TRANCOUNT > 0 ROLLBACK", 0, None).await;
+                        if rolled_back.is_err() {
+                            conn.discard();
+                        }
+                        res?
+                    }
+                    Err(_) => {
+                        conn.discard();
+                        return Err(AppError::msg("Query took longer than 15 seconds and was stopped"));
+                    }
+                }
+            }
         };
         Ok(sets.into_iter().next().unwrap_or_default())
     }
@@ -1197,9 +1393,104 @@ impl Session {
             Pool::Pg(p) => exec_tx!(p),
             Pool::My(p) => exec_tx!(p),
             Pool::Lite(p) => exec_tx!(p),
+            Pool::Ms(p) => self.ms_exec_tx(p, stmts).await?,
         })
     }
+
+    /// Runs a script on SQL Server. Read-only connections run it inside a
+    /// transaction that is always rolled back, since SQL Server has no
+    /// read-only session mode.
+    async fn ms_script(&self, conn: &mut crate::mssql::MsConn<'_>, sql: &str, max_rows: usize, progress: Progress<'_>) -> AppResult<Vec<ResultSet>> {
+        if !self.read_only {
+            return crate::mssql::run(conn, sql, max_rows, progress).await;
+        }
+        let lower = sql.to_ascii_lowercase();
+        if lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|w| w == "commit" || w == "save") {
+            return Err(AppError::msg("This connection is read-only"));
+        }
+        crate::mssql::run(conn, "BEGIN TRAN; SELECT 1", 1, None).await?;
+        let out = crate::mssql::run(conn, sql, max_rows, progress).await;
+        if crate::mssql::run(conn, "IF @@TRANCOUNT > 0 ROLLBACK", 0, None).await.is_err() {
+            conn.discard();
+        }
+        out
+    }
+
+    async fn ms_exec_tx(&self, pool: &crate::mssql::MsPool, stmts: Vec<(String, Vec<Option<String>>, bool)>) -> AppResult<u64> {
+        let mut conn = pool.acquire().await?;
+        crate::mssql::run(&mut conn, "SET XACT_ABORT ON; BEGIN TRAN; SELECT 1", 1, None).await?;
+        let res: AppResult<u64> = async {
+            let mut total = 0u64;
+            for (sql, binds, single) in stmts {
+                let params: Vec<&dyn tiberius::ToSql> = binds.iter().map(|b| b as &dyn tiberius::ToSql).collect();
+                let started = std::time::Instant::now();
+                let r = conn.client().execute(sql.as_str(), &params).await;
+                let affected = r.as_ref().map(|r| r.rows_affected().last().copied().unwrap_or(0));
+                self.record(&sql, started, affected.map(|n| format!("{n} affected")).map_err(crate::error::ms_message));
+                drop(params);
+                let affected = conn.check(r).map(|r| r.rows_affected().last().copied().unwrap_or(0))?;
+                if single && affected != 1 {
+                    return Err(AppError::msg(format!(
+                        "Expected to change 1 row but {affected} matched — nothing was saved. \
+                         The data may have changed; refresh and try again."
+                    )));
+                }
+                total += affected;
+            }
+            Ok(total)
+        }
+        .await;
+        let end = if res.is_ok() { "COMMIT" } else { "IF @@TRANCOUNT > 0 ROLLBACK" };
+        if let Err(e) = crate::mssql::run(&mut conn, end, 0, None).await {
+            conn.discard();
+            res?;
+            return Err(e);
+        }
+        res
+    }
 }
+
+/// SQL Server's default definitions come wrapped in parentheses: `((0))`, `(getdate())`.
+fn unwrap_parens(v: &str) -> &str {
+    let mut s = v.trim();
+    while s.starts_with('(') && s.ends_with(')') {
+        // Only strip when the outer pair encloses everything: `(a)+(b)` stays.
+        let inner = &s[1..s.len() - 1];
+        let mut depth = 0i32;
+        let balanced = inner.chars().all(|c| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            depth >= 0
+        }) && depth == 0;
+        if !balanced {
+            break;
+        }
+        s = inner.trim();
+    }
+    s
+}
+
+/// A column's declared type with its length/precision, e.g. `nvarchar(50)`, `decimal(12,2)`.
+/// Expects `c` = sys.columns and `t` = sys.types.
+const MS_TYPE: &str = "CASE WHEN t.name IN ('varchar','char','varbinary','binary') \
+       THEN t.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(c.max_length AS varchar(10)) END + ')' \
+     WHEN t.name IN ('nvarchar','nchar') \
+       THEN t.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')' \
+     WHEN t.name IN ('decimal','numeric') THEN t.name + '(' + CAST(c.precision AS varchar(5)) + ',' + CAST(c.scale AS varchar(5)) + ')' \
+     WHEN t.name IN ('datetime2','time','datetimeoffset') THEN t.name + '(' + CAST(c.scale AS varchar(5)) + ')' \
+     ELSE t.name END";
+
+const MS_FK_BASE: &str = "SELECT fk.name, SCHEMA_NAME(fk.schema_id), OBJECT_NAME(fk.parent_object_id), \
+     (SELECT STRING_AGG(COL_NAME(fkc.parent_object_id, fkc.parent_column_id), ', ') WITHIN GROUP (ORDER BY fkc.constraint_column_id) \
+       FROM sys.foreign_key_columns fkc WHERE fkc.constraint_object_id = fk.object_id), \
+     OBJECT_SCHEMA_NAME(fk.referenced_object_id), OBJECT_NAME(fk.referenced_object_id), \
+     (SELECT STRING_AGG(COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id), ', ') WITHIN GROUP (ORDER BY fkc.constraint_column_id) \
+       FROM sys.foreign_key_columns fkc WHERE fkc.constraint_object_id = fk.object_id), \
+     REPLACE(fk.update_referential_action_desc, '_', ' '), REPLACE(fk.delete_referential_action_desc, '_', ' ') \
+     FROM sys.foreign_keys fk WHERE 1 = 1";
 
 struct Placeholders<'a> {
     driver: Driver,
@@ -1215,6 +1506,7 @@ impl Placeholders<'_> {
                 let ty = self.types.get(col).map(String::as_str).unwrap_or("text");
                 format!("CAST(CAST(${} AS text) AS {ty})", self.n)
             }
+            Driver::Mssql => format!("@P{}", self.n),
             _ => "?".into(),
         }
     }
@@ -1375,7 +1667,7 @@ pub fn redact_secrets(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut i = 0;
     while i < sql.len() {
-        let hit = ["password ", "identified by "]
+        let hit = ["password ", "password=", "identified by "]
             .iter()
             .filter_map(|k| lower[i..].find(k).map(|p| (p, k.len())))
             .min_by_key(|(p, _)| *p);
@@ -1386,7 +1678,15 @@ pub fn redact_secrets(sql: &str) -> String {
         let after = i + p + klen;
         out.push_str(&sql[i..after]);
         let rest = &sql[after..];
-        let trimmed = rest.trim_start();
+        // Skip whitespace, SQL Server's `=` and N'' prefix: PASSWORD = N'…'.
+        let mut t = rest.trim_start();
+        if let Some(x) = t.strip_prefix('=') {
+            t = x.trim_start();
+        }
+        if t.starts_with("N'") || t.starts_with("n'") {
+            t = &t[1..];
+        }
+        let trimmed = t;
         let ws = rest.len() - trimmed.len();
         if let Some(body) = trimmed.strip_prefix('\'') {
             // Find the closing quote, honoring '' and \' escapes.
@@ -1642,6 +1942,8 @@ mod redact_tests {
         assert_eq!(redact_secrets("CREATE ROLE a LOGIN PASSWORD 'se''cr;et' VALID UNTIL 'x'"), "CREATE ROLE a LOGIN PASSWORD '•••' VALID UNTIL 'x'");
         assert_eq!(redact_secrets("ALTER USER 'u'@'%' IDENTIFIED BY 'p\\'w'; SELECT 1"), "ALTER USER 'u'@'%' IDENTIFIED BY '•••'; SELECT 1");
         assert_eq!(redact_secrets("SELECT password FROM t"), "SELECT password FROM t");
+        assert_eq!(redact_secrets("CREATE LOGIN [a] WITH PASSWORD = N'x;y'"), "CREATE LOGIN [a] WITH PASSWORD = N'•••'");
+        assert_eq!(redact_secrets("ALTER USER [a] WITH PASSWORD=N'z'"), "ALTER USER [a] WITH PASSWORD=N'•••'");
     }
 }
 

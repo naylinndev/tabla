@@ -22,6 +22,7 @@ pub enum Driver {
     Mysql,
     Sqlite,
     Redis,
+    Mssql,
 }
 
 impl Driver {
@@ -31,12 +32,14 @@ impl Driver {
             Driver::Mysql => 3306,
             Driver::Sqlite => 0,
             Driver::Redis => 6379,
+            Driver::Mssql => 1433,
         }
     }
 
     pub fn quote_ident(self, s: &str) -> String {
         match self {
             Driver::Mysql => format!("`{}`", s.replace('`', "``")),
+            Driver::Mssql => format!("[{}]", s.replace(']', "]]")),
             _ => format!("\"{}\"", s.replace('"', "\"\"")),
         }
     }
@@ -46,7 +49,8 @@ impl Driver {
         if self == Driver::Mysql {
             v = v.replace('\\', "\\\\");
         }
-        format!("'{v}'")
+        // N'' keeps non-ASCII text intact when compared with nvarchar columns.
+        if self == Driver::Mssql { format!("N'{v}'") } else { format!("'{v}'") }
     }
 
     pub fn qualified(self, schema: &str, table: &str) -> String {
