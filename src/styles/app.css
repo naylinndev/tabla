@@ -4462,3 +4462,10 @@ pre.grants {
   background: var(--accent);
   height: 2px;
 }
+
+/* While reordering: a grabbing cursor everywhere and no text selection. */
+body.reordering,
+body.reordering * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

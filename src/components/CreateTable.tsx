@@ -5,6 +5,7 @@ import { quoteIdent } from "../lib/sql";
 import { useApp, type Session } from "../lib/store";
 import { Checkbox, Combobox } from "./controls";
 import { SqlConfirm } from "./SqlConfirm";
+import { useReorder } from "./ui";
 
 interface Col {
   key: string;
@@ -89,7 +90,18 @@ export function CreateTableDialog({ session, onClose }: { session: Session; onCl
   const d = session.connection.driver;
   const [name, setName] = useState("");
   const [cols, setCols] = useState<Col[]>(() => [idColumn(d), { key: newKey(), name: "name", type: d === "sqlite" ? "TEXT" : d === "mysql" ? "varchar(255)" : d === "mssql" ? "nvarchar(255)" : d === "clickhouse" ? "String" : d === "duckdb" ? "VARCHAR" : d === "oracle" ? "VARCHAR2(255)" : "text", pk: false, auto: false, nullable: true, def: "" }]);
-  const [dragKey, setDragKey] = useState<string | null>(null);
+  const reorder = useReorder("new-table-cols", {
+    over: (from, to) =>
+      setCols((cs) => {
+        const a = [...cs];
+        const i = a.findIndex((x) => x.key === from);
+        const j = a.findIndex((x) => x.key === to);
+        const [m] = a.splice(i, 1);
+        a.splice(j, 0, m);
+        return a;
+      }),
+  });
+  const dragKey = reorder.dragging;
 
   const problems = useMemo(() => {
     const p: string[] = [];
@@ -155,20 +167,9 @@ export function CreateTableDialog({ session, onClose }: { session: Session; onCl
             <div
               key={c.key}
               className={`sg-row ${dragKey === c.key ? "dragging" : ""}`}
-              onDragOver={(e) => {
-                if (!dragKey || dragKey === c.key) return;
-                e.preventDefault();
-                setCols((cs) => {
-                  const a = [...cs];
-                  const i = a.findIndex((x) => x.key === dragKey);
-                  const j = a.findIndex((x) => x.key === c.key);
-                  const [m] = a.splice(i, 1);
-                  a.splice(j, 0, m);
-                  return a;
-                });
-              }}
+              {...reorder.itemProps(c.key)}
             >
-              <span className="grip" draggable onDragStart={() => setDragKey(c.key)} onDragEnd={() => setDragKey(null)}>
+              <span className="grip" {...reorder.handleProps(c.key)} title="Drag to reorder">
                 <GripVertical />
               </span>
               <input className="sg-in strong" value={c.name} placeholder="column_name" onChange={(e) => patch(c.key, { name: e.target.value })} spellCheck={false} />

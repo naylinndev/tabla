@@ -135,6 +135,62 @@ export function TagBadge({ tag }: { tag: string }) {
 }
 
 /** Drag handle hook: reports pixel deltas while dragging. */
+/**
+ * Drag-to-reorder with plain mouse events. HTML drag-and-drop isn't delivered
+ * reliably inside the desktop webviews (WebKit on macOS), so this tracks the
+ * pointer itself. Items carry `itemProps(key)`; the drag starts from
+ * `handleProps(key)` once the pointer has moved a few pixels, so a plain click
+ * still works (e.g. sorting by a column header).
+ */
+export function useReorder(group: string, on: { over?(from: string, to: string): void; drop?(from: string, to: string): void }) {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  const handlers = useRef(on);
+  handlers.current = on;
+  const handleProps = (key: string) => ({
+    onMouseDown(e: React.MouseEvent) {
+      if (e.button !== 0) return;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let active = false;
+      let target: string | null = null;
+      const move = (ev: MouseEvent) => {
+        if (!active) {
+          if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) < 4) return;
+          active = true;
+          setDragging(key);
+          document.body.classList.add("reordering");
+        }
+        ev.preventDefault();
+        const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>(`[data-reorder="${group}"]`);
+        const k = el?.dataset.reorderKey ?? null;
+        if (k === null || k === target) return;
+        target = k;
+        setOver(k);
+        if (k !== key) handlers.current.over?.(key, k);
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        if (!active) return;
+        document.body.classList.remove("reordering");
+        // The click that ends a drag isn't a click on whatever is underneath.
+        // It fires right after mouseup; if it doesn't come, stop waiting for it.
+        const swallow = (ev: MouseEvent) => ev.stopPropagation();
+        window.addEventListener("click", swallow, { capture: true, once: true });
+        setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+        if (target !== null && target !== key) handlers.current.drop?.(key, target);
+        setDragging(null);
+        setOver(null);
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    },
+  });
+  const itemProps = (key: string) => ({ "data-reorder": group, "data-reorder-key": key });
+  return { dragging, over, handleProps, itemProps };
+}
+
 export function useDrag(onMove: (dx: number, dy: number) => void, onEnd?: () => void) {
   const [active, setActive] = useState(false);
   const start = (e: React.MouseEvent) => {

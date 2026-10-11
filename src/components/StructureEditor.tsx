@@ -3,7 +3,7 @@ import { AlertTriangle, Check, Code2, Copy, GripVertical, Info, KeyRound, Minus,
 import { api, errorMessage, type AlterColumn, type AlterRequest, type TableStructure } from "../lib/api";
 import { useApp, type Session } from "../lib/store";
 import { joinType, splitType } from "../lib/format";
-import { Modal } from "./ui";
+import { Modal, useReorder } from "./ui";
 import { Checkbox, Combobox } from "./controls";
 import { SqlConfirm } from "./SqlConfirm";
 import { quoteIdent } from "../lib/sql";
@@ -79,7 +79,9 @@ export function StructureEditor({
   const prod = session.connection.tag === "production";
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [dragKey, setDragKey] = useState<string | null>(null);
+  // Live reordering: the row follows the pointer (see move below).
+  const reorder = useReorder("structure-cols", { over: (from, to) => move(from, to) });
+  const dragKey = reorder.dragging;
   const [plan, setPlan] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -230,23 +232,9 @@ export function StructureEditor({
                 role="row"
                 className={`sg-row ${selected === d.key ? "sel" : ""} ${d.dropped ? "dropped" : !d.original ? "added" : changed ? "changed" : ""} ${dragKey === d.key ? "dragging" : ""}`}
                 onMouseDown={() => setSelected(d.key)}
-                onDragOver={(e) => {
-                  if (!dragKey || dragKey === d.key) return;
-                  e.preventDefault();
-                  move(dragKey, d.key);
-                }}
+                {...reorder.itemProps(d.key)}
               >
-                <span
-                  className="grip"
-                  draggable={editable}
-                  onDragStart={(e) => {
-                    setDragKey(d.key);
-                    e.dataTransfer.effectAllowed = "move";
-                    e.dataTransfer.setData("text/plain", d.key);
-                  }}
-                  onDragEnd={() => setDragKey(null)}
-                  title={editable ? "Drag to reorder" : undefined}
-                >
+                <span className="grip" {...(editable ? reorder.handleProps(d.key) : {})} title={editable ? "Drag to reorder" : undefined}>
                   {d.pk ? <KeyRound className="pk-ico" /> : <GripVertical />}
                 </span>
                 <input

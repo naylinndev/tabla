@@ -1,7 +1,8 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowRight, ArrowUp, Inbox, KeyRound } from "lucide-react";
 import { isBoolType, isJsonType, isNumericType, toTSV } from "../lib/sql";
+import { useReorder } from "./ui";
 
 export interface GridColumn {
   name: string;
@@ -102,8 +103,19 @@ export const DataGrid = memo(function DataGrid(p: Props) {
     return ordered.filter((i) => !hide.has(p.columns[i].name));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.columnOrder, p.hiddenColumns, colKey]);
-  const [dragFrom, setDragFrom] = useState<number | null>(null);
-  const [dropAt, setDropAt] = useState<number | null>(null);
+  // Header drag-to-reorder; the drop applies through onReorder.
+  const reorderGroup = useId();
+  const reorder = useReorder(reorderGroup, {
+    drop: (from, to) => {
+      const next = [...order];
+      const [moved] = next.splice(Number(from), 1);
+      next.splice(Number(to), 0, moved);
+      const hiddenNames = p.columns.filter((c) => (p.hiddenColumns ?? []).includes(c.name)).map((c) => c.name);
+      p.onReorder?.([...next.map((i) => p.columns[i].name), ...hiddenNames]);
+    },
+  });
+  const dragFrom = reorder.dragging === null ? null : Number(reorder.dragging);
+  const dropAt = reorder.over === null ? null : Number(reorder.over);
 
   const gutterW = Math.max(44, String((p.rowNumberOffset ?? 0) + p.rowCount).length * 8 + 22);
   const offsets = useMemo(() => {
@@ -271,33 +283,8 @@ export const DataGrid = memo(function DataGrid(p: Props) {
                     dropAt === di && dragFrom !== null && dragFrom !== di ? (dragFrom < di ? "drop-after" : "drop-before") : ""
                   }`}
                   style={{ width: widths[ci] }}
-                  draggable={!!p.onReorder}
-                  onDragStart={(e) => {
-                    setDragFrom(di);
-                    e.dataTransfer.effectAllowed = "move";
-                    e.dataTransfer.setData("text/plain", c.name);
-                  }}
-                  onDragOver={(e) => {
-                    if (dragFrom === null) return;
-                    e.preventDefault();
-                    setDropAt(di);
-                  }}
-                  onDragEnd={() => {
-                    setDragFrom(null);
-                    setDropAt(null);
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    if (dragFrom !== null && dragFrom !== di) {
-                      const next = [...order];
-                      const [moved] = next.splice(dragFrom, 1);
-                      next.splice(di, 0, moved);
-                      const hiddenNames = p.columns.filter((c) => (p.hiddenColumns ?? []).includes(c.name)).map((c) => c.name);
-                      p.onReorder?.([...next.map((i) => p.columns[i].name), ...hiddenNames]);
-                    }
-                    setDragFrom(null);
-                    setDropAt(null);
-                  }}
+                  {...reorder.itemProps(String(di))}
+                  {...(p.onReorder ? reorder.handleProps(String(di)) : {})}
                   onClick={() => p.onSort?.(c.name)}
                   title={`${c.name} · ${c.typeName}`}
                   role="columnheader"
