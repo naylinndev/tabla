@@ -24,9 +24,31 @@ permissions:
   contents: write
 
 jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch' && !inputs.homebrew_only
+    runs-on: ubuntu-latest
+    steps:
+      # Deleting a release on GitHub keeps its tag. Left alone, the new release
+      # would reuse it and point at the old commit, so drop a tag no release uses.
+      - name: Drop a tag left by a deleted release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ inputs.version }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "No tag $TAG yet."
+          elif gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Release $TAG is already published. Bump the version, or delete that release first."
+            exit 1
+          else
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
+            echo "Removed tag $TAG, which no release uses."
+          fi
+
   build:
+    needs: prepare
     # Publishing a release only updates Homebrew; the installers already exist.
-    if: github.event_name != 'release' && !inputs.homebrew_only
+    if: github.event_name == 'workflow_dispatch' && !inputs.homebrew_only
     strategy:
       fail-fast: false
       matrix:
