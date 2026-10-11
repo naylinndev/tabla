@@ -4,6 +4,8 @@ import type { Session } from "./store";
 
 const ENGINE = { postgres: "PostgreSQL", mysql: "MySQL", sqlite: "SQLite", redis: "Redis", mssql: "SQL Server", clickhouse: "ClickHouse", duckdb: "DuckDB", oracle: "Oracle", mongodb: "MongoDB" } as const;
 
+export const engineName = (d: keyof typeof ENGINE) => ENGINE[d];
+
 export function engineLabel(s: Session) {
   const p = providerById(s.connection.provider, s.connection.driver);
   const base = ENGINE[s.connection.driver];

@@ -81,8 +81,8 @@ export function Home() {
   const list = useMemo(
     () =>
       connections
-        .filter((c) => !q || `${c.name} ${address(c)} ${c.tag}`.toLowerCase().includes(q.toLowerCase()))
-        .sort((a, b) => a.name.localeCompare(b.name)),
+        // Same order as the left rail, so Mod+1…9 match what you see here.
+        .filter((c) => !q || `${c.name} ${address(c)} ${c.tag}`.toLowerCase().includes(q.toLowerCase())),
     [connections, q],
   );
 
@@ -244,7 +244,7 @@ export function Home() {
           <div className="feature">
             <ShieldCheck />
             <b>Safe by default</b>
-            <span>Keychain passwords, read-only mode, production guardrails.</span>
+            <span>Keychain passwords, encrypted local data, read-only mode, production guardrails.</span>
           </div>
           <div className="feature">
             <Command />

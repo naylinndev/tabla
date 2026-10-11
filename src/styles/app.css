@@ -1318,6 +1318,11 @@ html:not(.mac) .titlebar-space {
 .s-table td.mono {
   user-select: text;
 }
+.pk-ico {
+  color: var(--warn);
+  width: 13px;
+  height: 13px;
+}
 .s-table .pk-ico {
   color: var(--warn);
   width: 13px;
@@ -2277,6 +2282,19 @@ html:not(.mac) .titlebar-space {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Only the breadcrumb gives way; buttons, the pager and its page-size box keep their size. */
+.toolbar > :not(.crumb):not(.spacer) {
+  flex-shrink: 0;
+}
+.pager span {
+  white-space: nowrap;
+}
+/* The table's view tabs go icon-only first; they keep their titles as tooltips. */
+@container (max-width: 1120px) {
+  .view-switch .lbl {
+    display: none;
+  }
+}
 @container (max-width: 860px) {
   .lbl,
   .crumb .schema,
@@ -2799,7 +2817,7 @@ html:not(.mac) .titlebar-space {
   width: 100%;
 }
 .w-pagesize {
-  width: 76px;
+  width: 92px;
 }
 .w-col {
   width: 170px;

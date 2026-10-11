@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import { closeCompletion } from "@codemirror/autocomplete";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
@@ -245,8 +246,9 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
       EditorView.lineWrapping,
       Prec.highest(
         keymap.of([
-          { key: "Mod-Enter", run: () => (runRef.current("current"), true) },
-          { key: "Shift-Mod-Enter", run: () => (runRef.current("all"), true) },
+          // Running closes any open suggestion list first.
+          { key: "Mod-Enter", run: (v) => (closeCompletion(v), runRef.current("current"), true) },
+          { key: "Shift-Mod-Enter", run: (v) => (closeCompletion(v), runRef.current("all"), true) },
           { key: "Shift-Mod-f", run: () => (formatRef.current(), true) },
           { key: "Mod-s", run: () => (saveRef.current(), true) },
         ]),

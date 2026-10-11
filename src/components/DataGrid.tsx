@@ -50,12 +50,10 @@ const HEAD_H = 34;
 const MAX_RENDER_CHARS = 400;
 
 function initialWidth(col: GridColumn, sample: (string | null | undefined)[]) {
-  const longest = Math.max(
-    col.name.length + (col.pk ? 3 : 0),
-    Math.min(col.typeName.length, 14) * 0.8 + col.name.length * 0.4,
-    ...sample.map((v) => (v == null ? 4 : Math.min(v.length, 60))),
-  );
-  return Math.round(Math.min(400, Math.max(80, longest * 7.6 + 34)));
+  // Header: bold name, then the type in small mono (cut off past ~18 chars), key icon for PKs.
+  const head = col.name.length * 7.8 + Math.min(col.typeName.length, 18) * 6.4 + (col.pk ? 18 : 0) + 34;
+  const data = Math.max(4, ...sample.map((v) => (v == null ? 4 : Math.min(v.length, 60)))) * 7.6 + 34;
+  return Math.round(Math.min(400, Math.max(80, head, data)));
 }
 
 function CellValue({ v, type }: { v: string | null | undefined; type: string }) {

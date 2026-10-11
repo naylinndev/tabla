@@ -29,7 +29,7 @@ import {
 import { local, newConnection, useApp, type SavedQuery, type Session, type Tab } from "../lib/store";
 import { isLocal } from "../lib/api";
 import { DriverIcon } from "./icons";
-import { schemaPrompt } from "../lib/ai";
+import { schemaPrompt, engineName } from "../lib/ai";
 import { ContextMenu, Kbd, Modal, TagBadge, useDrag } from "./ui";
 import { useTableMenu } from "./TableActions";
 import { Console } from "./Console";
@@ -295,8 +295,9 @@ function Sidebar({ session }: { session: Session }) {
               {c.readOnly && <Lock size={11} className="dim" />}
             </div>
             <div className="sb-conn-meta">
-              {isLocal(c.driver) ? c.database.split(/[\\/]/).pop() : `${c.host}:${c.port}`} · v
-              {session.serverVersion.split(/[\s-]/)[0]}
+              {/* The file name is already the title for local databases. */}
+              {isLocal(c.driver) ? engineName(c.driver) : `${c.host}:${c.port}`} · v
+              {session.serverVersion.split(/[\s-]/)[0].replace(/^v/i, "")}
             </div>
           </div>
           <TagBadge tag={c.tag} />
