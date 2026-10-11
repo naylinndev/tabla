@@ -484,9 +484,39 @@ mod integration {
         INSERT INTO dbo.ms_orders (product_id, qty) VALUES (1, 2), (1, 1), (3, 5);
     ";
 
+    /// Connects and queries on a default 2 MB test-thread stack, plain and with TLS.
     #[tokio::test]
-    async fn mssql_end_to_end() {
+    async fn mssql_connect_default_stack() {
+        let Some((mut c, pw)) = cfg() else { return };
+        for mode in [crate::config::SslMode::Disable, crate::config::SslMode::Require] {
+            eprintln!("--> mssql step: connect {mode:?}");
+            c.ssl_mode = mode;
+            let s = Session::connect(&c, Some(pw.clone())).await.unwrap();
+            eprintln!("--> mssql step: query {mode:?}");
+            assert_eq!(s.run_script("SELECT 1", 1).await.unwrap()[0].rows[0][0].as_deref(), Some("1"));
+            s.close().await;
+        }
+    }
+
+    /// Runs a test body on a thread with a large stack (debug builds of the
+    /// TDS/TLS stack use deep call chains).
+    fn big_stack<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
+        std::thread::Builder::new()
+            .stack_size(32 << 20)
+            .spawn(move || tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_stack_size(32 << 20).enable_all().build().unwrap().block_on(f))
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn mssql_end_to_end() {
+        big_stack(end_to_end());
+    }
+
+    async fn end_to_end() {
         let Some((c, pw)) = cfg() else { return };
+        eprintln!("--> mssql step: e2e start");
         let s = Session::connect(&c, Some(pw.clone())).await.unwrap();
         assert!(!s.server_version().await.unwrap().is_empty());
         s.run_script(SETUP, 10).await.unwrap();
@@ -507,6 +537,7 @@ mod integration {
         assert_eq!((p.kind.as_str(), p.rows_estimate), ("table", Some(3)));
         assert_eq!(tables.iter().find(|t| t.name == "ms_orders_v").unwrap().kind, "view");
 
+        eprintln!("--> mssql step: Structure");
         // Structure
         let st = s.table_structure("dbo", "ms_products").await.unwrap();
         let col = |n: &str| st.columns.iter().find(|c| c.name == n).unwrap();
@@ -517,6 +548,7 @@ mod integration {
         assert_eq!(col("title").default_value.as_deref(), Some("N'untitled'"));
         assert!(st.indexes.iter().any(|i| i.primary && i.columns == "id"));
 
+        eprintln!("--> mssql step: Values decode as display strin");
         // Values decode as display strings.
         let sets = s.run_script("SELECT price, img, flag, uid, made, born, at, title FROM dbo.ms_products ORDER BY id", 100).await.unwrap();
         let r = &sets[0].rows;
@@ -539,6 +571,7 @@ mod integration {
         assert_eq!(upd[0].rows_affected, 3);
         assert_eq!(s.run_script("SET NOCOUNT OFF", 1).await.unwrap().len(), 1);
 
+        eprintln!("--> mssql step: Paging ");
         // Paging (with and without an explicit sort), filter and count.
         let page = s
             .fetch_rows(&FetchArgs { schema: "dbo".into(), table: "ms_products".into(), filter: None, sort: Some(SortSpec { column: "price".into(), desc: true }), limit: 2, offset: 0 })
@@ -552,6 +585,7 @@ mod integration {
             .unwrap();
         assert_eq!((page.total, page.result.columns.len()), (Some(0), 2));
 
+        eprintln!("--> mssql step: Edits are bound");
         // Edits are bound parameters inside one transaction.
         let key = |v: &str| vec![CellValue { column: "id".into(), value: Some(v.into()) }];
         let n = s
@@ -571,6 +605,7 @@ mod integration {
         let err = s.run_script("SELECT * FROM nope", 1).await.unwrap_err().to_string();
         assert_eq!(err, "Invalid object name 'nope'.");
 
+        eprintln!("--> mssql step: Relations");
         // Relations, triggers, ERD
         let rel = s.table_relations("dbo", "ms_orders").await.unwrap();
         assert_eq!(rel.outgoing.len(), 1);
@@ -583,6 +618,7 @@ mod integration {
         assert!(g.foreign_keys.iter().any(|f| f.name == "fk_orders_product"));
         assert!(g.tables.iter().find(|t| t.name == "ms_products").unwrap().columns.iter().any(|c| c.primary_key));
 
+        eprintln!("--> mssql step: Info view and DDL");
         // Info view and DDL
         let info = s.table_details("dbo", "ms_orders").await.unwrap();
         assert!(info.total_bytes.unwrap() > 0);
@@ -591,6 +627,7 @@ mod integration {
         assert!(ddl.contains("IDENTITY(1,1)") && ddl.contains("CREATE INDEX [ix_orders_product]"), "{ddl}");
         assert!(s.table_details("dbo", "ms_orders_v").await.unwrap().ddl.unwrap().contains("CREATE VIEW"));
 
+        eprintln!("--> mssql step: Structure editing");
         // Structure editing, including default constraints.
         let def = |n: &str, t: &str, null: bool, d: Option<&str>| ColumnDef { name: n.into(), data_type: t.into(), nullable: null, default_value: d.map(Into::into) };
         let req = |changes| AlterRequest { schema: "dbo".into(), table: "ms_orders".into(), changes, order: vec![] };
@@ -618,11 +655,13 @@ mod integration {
         assert!(bad.is_err());
         assert!(!s.table_structure("dbo", "ms_orders").await.unwrap().columns.iter().any(|c| c.name == "tmp"));
 
+        eprintln!("--> mssql step: AI queries always");
         // AI queries always roll back.
         let _ = s.run_readonly("DELETE FROM dbo.ms_orders", 10).await;
         let left = s.run_readonly("SELECT COUNT(*) FROM dbo.ms_orders", 10).await.unwrap();
         assert_eq!(left.rows[0][0].as_deref(), Some("3"));
 
+        eprintln!("--> mssql step: Read-only connections");
         // Read-only connections never persist writes.
         let mut ro = c.clone();
         ro.read_only = true;
@@ -638,8 +677,12 @@ mod integration {
         s.close().await;
     }
 
-    #[tokio::test]
-    async fn mssql_cancel() {
+    #[test]
+    fn mssql_cancel() {
+        big_stack(cancel());
+    }
+
+    async fn cancel() {
         let Some((c, pw)) = cfg() else { return };
         let s = Arc::new(Session::connect(&c, Some(pw)).await.unwrap());
         let s2 = s.clone();
@@ -654,3 +697,4 @@ mod integration {
         assert_eq!(s.run_script("SELECT 1", 1).await.unwrap()[0].rows[0][0].as_deref(), Some("1"));
     }
 }
+

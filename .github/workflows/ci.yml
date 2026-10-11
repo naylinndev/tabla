@@ -107,6 +107,22 @@ jobs:
               -Q "IF DB_ID('tabla_test') IS NULL CREATE DATABASE tabla_test" && break
             sleep 2
           done
+      - name: SQL Server tests
+        working-directory: src-tauri
+        shell: bash
+        env:
+          TABLA_TEST_MSSQL: "127.0.0.1:1433:sa:tabla_test"
+          TABLA_TEST_MSSQL_PASSWORD: "Tabla-ci-only-1"
+        run: |
+          set +e
+          CARGO_TERM_COLOR=never cargo test --lib mssql -- --nocapture --test-threads=1 2>&1 | tee mssql.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            grep -E "error(\[|:)|panicked at|FAILED|-->|overflow|left:|right:" mssql.log | tail -25 | while IFS= read -r line; do
+              echo "::error title=sql server tests::${line}"
+            done
+          fi
+          exit "$status"
       - name: Integration tests
         working-directory: src-tauri
         shell: bash
@@ -114,13 +130,11 @@ jobs:
           TABLA_TEST_PG: "127.0.0.1:5432:postgres:tabla_test"
           TABLA_TEST_MYSQL: "127.0.0.1:3306:root:tabla_test"
           TABLA_TEST_REDIS: "127.0.0.1:6379:9"
-          TABLA_TEST_MSSQL: "127.0.0.1:1433:sa:tabla_test"
-          TABLA_TEST_MSSQL_PASSWORD: "Tabla-ci-only-1"
         run: |
           export TABLA_TEST_SQLITE="$RUNNER_TEMP/tabla_test.db"
           export TABLA_CONFIG_DIR="$RUNNER_TEMP/tabla-config"
           set +e
-          CARGO_TERM_COLOR=never cargo test --lib 2>&1 | tee test.log
+          CARGO_TERM_COLOR=never cargo test --lib -- --skip mssql 2>&1 | tee test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             grep -E "error(\[|:)|panicked at|FAILED|could not compile|-->" test.log | head -30 | while IFS= read -r line; do
