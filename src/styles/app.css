@@ -3311,7 +3311,6 @@ html:not(.mac) .titlebar-space {
 
 /* Console drawer */
 .console {
-  height: 260px;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -4449,4 +4448,17 @@ pre.grants {
 }
 .hint.warn {
   color: var(--warn);
+}
+
+/* Resize handle along the console's top edge (the border is drawn by .console). */
+.console-split {
+  margin: -4px 0 -3px;
+}
+.console-split::after {
+  background: transparent;
+}
+.console-split:hover::after,
+.console-split.on::after {
+  background: var(--accent);
+  height: 2px;
 }
