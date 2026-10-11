@@ -23,6 +23,7 @@ pub enum Driver {
     Sqlite,
     Redis,
     Mssql,
+    Clickhouse,
 }
 
 impl Driver {
@@ -33,12 +34,13 @@ impl Driver {
             Driver::Sqlite => 0,
             Driver::Redis => 6379,
             Driver::Mssql => 1433,
+            Driver::Clickhouse => 8123,
         }
     }
 
     pub fn quote_ident(self, s: &str) -> String {
         match self {
-            Driver::Mysql => format!("`{}`", s.replace('`', "``")),
+            Driver::Mysql | Driver::Clickhouse => format!("`{}`", s.replace('`', "``")),
             Driver::Mssql => format!("[{}]", s.replace(']', "]]")),
             _ => format!("\"{}\"", s.replace('"', "\"\"")),
         }
@@ -46,7 +48,7 @@ impl Driver {
 
     pub fn quote_literal(self, s: &str) -> String {
         let mut v = s.replace('\'', "''");
-        if self == Driver::Mysql {
+        if matches!(self, Driver::Mysql | Driver::Clickhouse) {
             v = v.replace('\\', "\\\\");
         }
         // N'' keeps non-ASCII text intact when compared with nvarchar columns.

@@ -17,9 +17,10 @@ function buildSql(d: Driver, schema: string, t: TableInfo, action: Action, targe
   switch (action) {
     case "rename":
       if (d === "mssql") return [`EXEC sp_rename N'${from.replace(/'/g, "''")}', N'${target.replace(/'/g, "''")}'`];
-      return d === "mysql" ? [`RENAME TABLE ${from} TO ${to}`] : [`ALTER TABLE ${from} RENAME TO ${quoteIdent(d, target)}`];
+      return d === "mysql" || d === "clickhouse" ? [`RENAME TABLE ${from} TO ${to}`] : [`ALTER TABLE ${from} RENAME TO ${quoteIdent(d, target)}`];
     case "duplicate":
       if (d === "postgres") return [`CREATE TABLE ${to} (LIKE ${from} INCLUDING ALL)`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
+      if (d === "clickhouse") return [`CREATE TABLE ${to} AS ${from}`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
       if (d === "mysql") return [`CREATE TABLE ${to} LIKE ${from}`, ...(withData ? [`INSERT INTO ${to} SELECT * FROM ${from}`] : [])];
       // Copies columns and identity; keys and indexes are not copied.
       if (d === "mssql") return [`SELECT * INTO ${to} FROM ${from}${withData ? "" : " WHERE 1 = 0"}`];
@@ -118,7 +119,7 @@ function TableActionDialog({ session, action, table, onClose }: { session: Sessi
     setError(null);
     try {
       const begin = d === "mssql" ? "BEGIN TRAN" : "BEGIN";
-      const script = d === "mysql" || stmts.length === 1 ? stmts.join(";\n") : `${begin};\n${stmts.join(";\n")};\nCOMMIT`;
+      const script = d === "mysql" || d === "clickhouse" || stmts.length === 1 ? stmts.join(";\n") : `${begin};\n${stmts.join(";\n")};\nCOMMIT`;
       await api.runQuery(session.id, script);
       const st = useApp.getState();
       if (action === "rename" || action === "drop") {

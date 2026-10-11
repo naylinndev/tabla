@@ -26,6 +26,7 @@ const TYPES: Record<string, string[]> = {
   postgres: ["text", "character varying", "character", "integer", "bigint", "smallint", "serial", "bigserial", "boolean", "numeric", "real", "double precision", "date", "time without time zone", "timestamp without time zone", "timestamp with time zone", "interval", "jsonb", "json", "uuid", "bytea", "inet", "text[]", "integer[]"],
   mysql: ["int", "bigint", "smallint", "tinyint", "mediumint", "decimal", "float", "double", "bit", "varchar", "char", "text", "mediumtext", "longtext", "date", "datetime", "timestamp", "time", "year", "json", "enum", "blob", "longblob", "binary", "varbinary"],
   sqlite: ["TEXT", "INTEGER", "REAL", "NUMERIC", "BLOB"],
+  clickhouse: ["String", "UInt8", "UInt16", "UInt32", "UInt64", "Int8", "Int16", "Int32", "Int64", "Float32", "Float64", "Decimal", "Bool", "Date", "Date32", "DateTime", "DateTime64", "UUID", "IPv4", "IPv6", "Array(String)", "LowCardinality(String)", "Map(String, String)", "JSON", "FixedString"],
   mssql: ["int", "bigint", "smallint", "tinyint", "bit", "decimal", "numeric", "money", "float", "real", "nvarchar", "varchar", "nchar", "char", "date", "time", "datetime2", "datetimeoffset", "datetime", "uniqueidentifier", "varbinary", "xml"],
 };
 
@@ -297,7 +298,7 @@ export function StructureEditor({
           <span className="sg-count">
             {drafts.filter((d) => !d.dropped).length} columns
             {!mysql && editable && (
-              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
+              <span className="dim" title={`${driver === "postgres" ? "PostgreSQL" : driver === "mssql" ? "SQL Server" : driver === "clickhouse" ? "ClickHouse" : "SQLite"} can't reorder stored columns; dragging sets Tabla's grid order.`}>
                 {" "}
                 · <Info size={11} style={{ verticalAlign: -1 }} /> drag sets view order
               </span>
@@ -385,7 +386,9 @@ export function StructureEditor({
           title={`Drop index ${droppingIndex}`}
           description="Queries that relied on it may get slower. Data is not changed."
           statements={[
-            driver === "mysql" || driver === "mssql"
+            driver === "clickhouse"
+              ? `ALTER TABLE ${quoteIdent(driver, schema)}.${quoteIdent(driver, table)} DROP INDEX ${quoteIdent(driver, droppingIndex)}`
+              : driver === "mysql" || driver === "mssql"
               ? `DROP INDEX ${quoteIdent(driver, droppingIndex)} ON ${quoteIdent(driver, schema)}.${quoteIdent(driver, table)}`
               : `DROP INDEX ${quoteIdent(driver, schema)}.${quoteIdent(driver, droppingIndex)}`,
           ]}
@@ -468,7 +471,12 @@ function AddIndexDialog({
   const q = (x: string) => quoteIdent(d, x);
   // SQLite qualifies the index name with the schema; the others qualify the table.
   const target = d === "sqlite" ? `${q(schema)}.${q(idxName)} ON ${q(table)}` : `${q(idxName)} ON ${q(schema)}.${q(table)}`;
-  const stmt = picked.length ? `CREATE ${unique ? "UNIQUE " : ""}INDEX ${target} (${picked.map(q).join(", ")})` : "";
+  const stmt = !picked.length
+    ? ""
+    : d === "clickhouse"
+      ? // A data-skipping index; ClickHouse has no unique indexes.
+        `ALTER TABLE ${q(schema)}.${q(table)} ADD INDEX ${q(idxName)} (${picked.map(q).join(", ")}) TYPE minmax GRANULARITY 1`
+      : `CREATE ${unique ? "UNIQUE " : ""}INDEX ${target} (${picked.map(q).join(", ")})`;
   return (
     <SqlConfirm
       session={session}
@@ -500,7 +508,7 @@ function AddIndexDialog({
           <input className="input mono" placeholder={idxName} value={name} onChange={(e) => setName(e.target.value)} spellCheck={false} />
         </div>
         <div className="field" style={{ justifyContent: "flex-end" }}>
-          <Checkbox checked={unique} onChange={setUnique} label="Unique" />
+          {d !== "clickhouse" && <Checkbox checked={unique} onChange={setUnique} label="Unique" />}
         </div>
       </div>
     </SqlConfirm>

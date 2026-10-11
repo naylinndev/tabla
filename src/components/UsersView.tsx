@@ -25,6 +25,7 @@ function grantSql(d: Driver, who: string, scope: string, level: Level, revoke = 
       ? [`REVOKE SELECT, INSERT, UPDATE, DELETE, EXECUTE, CONTROL ON SCHEMA::${s} FROM ${who}`]
       : [`GRANT ${level === "all" ? "CONTROL" : privs} ON SCHEMA::${s} TO ${who}`];
   if (d === "mysql") return revoke ? [`REVOKE ALL PRIVILEGES ON ${s}.* FROM ${who}`] : [`GRANT ${privs} ON ${s}.* TO ${who}`];
+  if (d === "clickhouse") return revoke ? [`REVOKE ALL ON ${s}.* FROM ${who}`] : [`GRANT ${level === "all" ? "ALL" : privs} ON ${s}.* TO ${who}`];
   const pgPrivs = level === "all" ? "ALL" : privs;
   if (revoke)
     return [
@@ -45,7 +46,7 @@ function grantSql(d: Driver, who: string, scope: string, level: Level, revoke = 
 const MASK = "'•••'";
 
 function passwordSql(d: Driver, who: string, secret: string, contained: boolean): string {
-  if (d === "mysql") return `ALTER USER ${who} IDENTIFIED BY ${secret}`;
+  if (d === "mysql" || d === "clickhouse") return `ALTER USER ${who} IDENTIFIED BY ${secret}`;
   if (d === "mssql") return contained ? `ALTER USER ${who} WITH PASSWORD = ${secret}` : `ALTER LOGIN ${who} WITH PASSWORD = ${secret}`;
   return `ALTER ROLE ${who} PASSWORD ${secret}`;
 }
@@ -154,11 +155,11 @@ export function UsersView({ session, active }: { session: Session; active: boole
                 setPending({
                   title: `Delete ${sel.name}`,
                   description:
-                    d === "mysql" || d === "mssql"
+                    d === "mysql" || d === "mssql" || d === "clickhouse"
                       ? "The account can no longer sign in."
                       : "Anything it owns is handed to you first, then its privileges are removed and the role is deleted.",
                   statements:
-                    d === "mysql"
+                    d === "mysql" || d === "clickhouse"
                       ? [`DROP USER ${who}`]
                       : d === "mssql"
                         ? [`DROP USER IF EXISTS ${who}`, ...(contained ? [] : [`DROP LOGIN ${who}`])]
@@ -247,7 +248,7 @@ export function UsersView({ session, active }: { session: Session; active: boole
                       <Checkbox checked={sel.createRole} disabled={ro} onChange={(v) => attr("CREATEROLE", v)} label="Can create roles" />
                       <Checkbox checked={sel.superuser} disabled={ro} onChange={(v) => attr("SUPERUSER", v)} label="Superuser (bypasses every permission)" />
                     </div>
-                  ) : d === "mssql" ? (
+                  ) : d === "clickhouse" ? null : d === "mssql" ? (
                     <div className="users-attrs">
                       {!contained && (
                         <button
@@ -287,7 +288,7 @@ export function UsersView({ session, active }: { session: Session; active: boole
                 <div className="users-body">
                   <div className="grant-row">
                     <div className="field" style={{ flex: 1 }}>
-                      <label>{d === "mysql" ? "Database" : "Schema"}</label>
+                      <label>{d === "mysql" || d === "clickhouse" ? "Database" : "Schema"}</label>
                       <Select className="w-full" mono value={scope} options={session.schemas.map((s) => ({ value: s, label: s }))} onChange={(v) => setScope(String(v))} />
                     </div>
                     <div className="field" style={{ flex: 1 }}>
@@ -341,7 +342,7 @@ function CreateUser({ session, preset, onClose, onDone }: { session: Session; pr
   const who = acct(d, u);
   const contained = session.connection.provider === "azuresql";
   const create = (secret: string) =>
-    d === "mysql"
+    d === "mysql" || d === "clickhouse"
       ? `CREATE USER ${who} IDENTIFIED BY ${secret}`
       : d === "mssql"
         ? contained
@@ -414,7 +415,7 @@ function CreateUser({ session, preset, onClose, onDone }: { session: Session; pr
       </div>
       <div className="grid-2b">
         <div className="field">
-          <label>Access to {d === "mysql" ? "database" : "schema"}</label>
+          <label>Access to {d === "mysql" || d === "clickhouse" ? "database" : "schema"}</label>
           <Select className="w-full" mono value={scope} options={session.schemas.map((s) => ({ value: s, label: s }))} onChange={(v) => setScope(String(v))} />
         </div>
         <div className="field">

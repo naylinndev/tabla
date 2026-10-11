@@ -7,6 +7,8 @@
 //! - SQL Server: full support except column order, applied in one
 //!   transaction. Defaults are named constraints there, so changing or
 //!   dropping one looks up and drops the existing constraint first.
+//! - ClickHouse: add, drop, rename, retype and defaults. Nullability is part
+//!   of the type there (`Nullable(T)`). Statements apply one by one.
 //! - SQLite: add, rename and drop only (SQLite can't alter a column's type,
 //!   nullability or default in place).
 
@@ -47,6 +49,26 @@ pub struct AlterRequest {
     /// Desired physical column order (MySQL only); empty = unchanged.
     #[serde(default)]
     pub order: Vec<String>,
+}
+
+/// ClickHouse: the column type with `Nullable(…)` added or removed to match `nullable`.
+fn ch_type(c: &ColumnDef) -> String {
+    let t = c.data_type.trim();
+    let is_nullable = t.starts_with("Nullable(") || t.starts_with("LowCardinality(Nullable(");
+    match (c.nullable, is_nullable) {
+        (true, false) => match t.strip_prefix("LowCardinality(").and_then(|x| x.strip_suffix(')')) {
+            Some(inner) => format!("LowCardinality(Nullable({inner}))"),
+            None => format!("Nullable({t})"),
+        },
+        (false, true) => {
+            if let Some(inner) = t.strip_prefix("LowCardinality(Nullable(").and_then(|x| x.strip_suffix("))")) {
+                format!("LowCardinality({inner})")
+            } else {
+                t.strip_prefix("Nullable(").and_then(|x| x.strip_suffix(')')).unwrap_or(t).to_string()
+            }
+        }
+        _ => t.to_string(),
+    }
 }
 
 fn default_of(c: &ColumnDef) -> Option<&str> {
@@ -137,6 +159,14 @@ impl Session {
         for ch in &req.changes {
             match (&ch.original, &ch.column) {
                 (None, None) => {}
+                (None, Some(c)) if d == Driver::Clickhouse => {
+                    validate(c)?;
+                    let mut s = format!("ALTER TABLE {from} ADD COLUMN {} {}", q(&c.name), ch_type(c));
+                    if let Some(def) = default_of(c) {
+                        s.push_str(&format!(" DEFAULT {def}"));
+                    }
+                    out.push(s);
+                }
                 (None, Some(c)) => {
                     validate(c)?;
                     // SQL Server's ADD takes no COLUMN keyword.
@@ -229,6 +259,22 @@ impl Session {
                                 out.push(format!("ALTER TABLE {from} ADD DEFAULT {def} FOR {col}"));
                             }
                         }
+                        Driver::Clickhouse => {
+                            if o.name != c.name {
+                                out.push(format!("ALTER TABLE {from} RENAME COLUMN {} TO {}", q(&o.name), q(&c.name)));
+                            }
+                            let col = q(&c.name);
+                            let (ot, nt) = (ch_type(o), ch_type(c));
+                            if ot != nt {
+                                out.push(format!("ALTER TABLE {from} MODIFY COLUMN {col} {nt}"));
+                            }
+                            if default_of(o) != default_of(c) {
+                                out.push(match default_of(c) {
+                                    Some(def) => format!("ALTER TABLE {from} MODIFY COLUMN {col} DEFAULT {def}"),
+                                    None => format!("ALTER TABLE {from} MODIFY COLUMN {col} REMOVE DEFAULT"),
+                                });
+                            }
+                        }
                         Driver::Redis => return Err(crate::error::not_sql()),
                         Driver::Sqlite => {
                             if o.data_type.trim() != c.data_type.trim() || o.nullable != c.nullable || default_of(o) != default_of(c) {
@@ -296,6 +342,17 @@ impl Session {
         match &self.pool {
             Pool::Pg(p) => in_tx!(p),
             Pool::Lite(p) => in_tx!(p),
+            // No transactions: apply in order and say how far it got.
+            Pool::Ch(c) => {
+                for (i, s) in stmts.iter().enumerate() {
+                    let started = std::time::Instant::now();
+                    let res = c.query(s, 0, None, &[("mutations_sync", "2".into())]).await;
+                    self.record(s, started, res.as_ref().map(|_| "ok".to_string()).map_err(|e| e.to_string()));
+                    if let Err(e) = res {
+                        return Err(AppError::msg(format!("{e} (statement {} of {}; the {i} before it were applied)", i + 1, stmts.len())));
+                    }
+                }
+            }
             // SQL Server DDL is transactional too.
             Pool::Ms(p) => {
                 let mut conn = p.acquire().await?;

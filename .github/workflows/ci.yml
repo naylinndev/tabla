@@ -71,6 +71,14 @@ jobs:
       redis:
         image: redis:7
         ports: ["6379:6379"]
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        env:
+          CLICKHOUSE_DB: tabla_test
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: "tabla-ci-only"
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
       mssql:
         image: mcr.microsoft.com/mssql/server:2022-latest
         env:
@@ -124,12 +132,15 @@ jobs:
           fi
           exit "$status"
       - name: Integration tests
+        if: always()
         working-directory: src-tauri
         shell: bash
         env:
           TABLA_TEST_PG: "127.0.0.1:5432:postgres:tabla_test"
           TABLA_TEST_MYSQL: "127.0.0.1:3306:root:tabla_test"
           TABLA_TEST_REDIS: "127.0.0.1:6379:9"
+          TABLA_TEST_CLICKHOUSE: "127.0.0.1:8123:default:tabla_test"
+          TABLA_TEST_CLICKHOUSE_PASSWORD: "tabla-ci-only"
         run: |
           export TABLA_TEST_SQLITE="$RUNNER_TEMP/tabla_test.db"
           export TABLA_CONFIG_DIR="$RUNNER_TEMP/tabla-config"

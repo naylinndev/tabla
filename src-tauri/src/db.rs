@@ -29,6 +29,7 @@ pub enum Pool {
     My(MySqlPool),
     Lite(SqlitePool),
     Ms(crate::mssql::MsPool),
+    Ch(crate::clickhouse::ChClient),
 }
 
 /// One statement Tabla sent to the server (Console view). Memory only.
@@ -52,6 +53,7 @@ enum Cancel {
     Pg(String),
     My(String),
     Ms(String),
+    Ch(String),
 }
 
 pub struct Session {
@@ -351,6 +353,7 @@ impl Session {
                 }
                 Pool::My(po.connect_with(o).await?)
             }
+            Driver::Clickhouse => Pool::Ch(crate::clickhouse::ChClient::connect(cfg, host, port, password.clone()).await?),
             Driver::Mssql => Pool::Ms(crate::mssql::MsPool::connect(crate::mssql::build_config(cfg, host, port, db_host, password.clone())).await?),
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => {
@@ -374,6 +377,7 @@ impl Session {
             Pool::My(p) => p.close().await,
             Pool::Lite(p) => p.close().await,
             Pool::Ms(p) => p.close().await,
+            Pool::Ch(_) => {}
         }
     }
 
@@ -437,6 +441,7 @@ impl Session {
                 let mut conn = p.acquire().await?;
                 self.ms_script(&mut conn, sql, max_rows, None).await?
             }
+            Pool::Ch(c) => c.run(sql, max_rows, None, &[]).await?,
         };
 
         // A SELECT with zero rows carries no column metadata; ask the server.
@@ -490,6 +495,14 @@ impl Session {
                     }
                     out?
                 }
+                Pool::Ch(c) => {
+                    // The server tracks queries by our id; KILL QUERY uses it.
+                    let id = format!("tabla-{query_id}");
+                    self.running.lock().unwrap().insert(query_id.into(), Cancel::Ch(id.clone()));
+                    let out = c.run(sql, max_rows, progress, &[("query_id", id)]).await;
+                    self.running.lock().unwrap().remove(query_id);
+                    out?
+                }
                 // SQLite runs in-process; queries are local and cannot be interrupted from here.
                 Pool::Lite(p) => collect_with(raw().fetch_many(p), max_rows, |q| q.rows_affected(), lite_cell, progress).await?,
             })
@@ -497,7 +510,7 @@ impl Session {
         .await;
         let mut res = res.map_err(|e| {
             let m = e.to_string().to_lowercase();
-            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") {
+            if m.contains("canceling statement due to user request") || m.contains("query execution was interrupted") || m.contains("(query_was_cancelled)") {
                 AppError::msg("Query cancelled")
             } else {
                 e
@@ -535,6 +548,7 @@ impl Session {
                     running.remove(query_id);
                     Some(sql)
                 }
+                Some(Cancel::Ch(id)) => Some(format!("KILL QUERY WHERE query_id = {} ASYNC", Driver::Clickhouse.quote_literal(id))),
                 None => None,
             }
         };
@@ -550,6 +564,9 @@ impl Session {
             Pool::Ms(p) => {
                 let mut conn = p.acquire().await?;
                 crate::mssql::run(&mut conn, &sql, 0, None).await?;
+            }
+            Pool::Ch(c) => {
+                c.query(&sql, 0, None, &[]).await?;
             }
         }
         Ok(true)
@@ -567,7 +584,7 @@ impl Session {
             Pool::My(p) => meta(p.describe(s).await.ok()?.columns()),
             Pool::Lite(p) => meta(p.describe(s).await.ok()?.columns()),
             // SQL Server sends column metadata even for empty results.
-            Pool::Ms(_) => return None,
+            Pool::Ms(_) | Pool::Ch(_) => return None,
         };
         (!cols.is_empty()).then_some(cols)
     }
@@ -580,6 +597,7 @@ impl Session {
         let sql = match self.driver {
             Driver::Postgres => "SHOW server_version",
             Driver::Mysql => "SELECT VERSION()",
+            Driver::Clickhouse => "SELECT version()",
             Driver::Mssql => "SELECT CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(128)) + N' ' + CAST(SERVERPROPERTY('Edition') AS nvarchar(128))",
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => "SELECT sqlite_version()",
@@ -598,6 +616,10 @@ impl Session {
                 "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN \
                  ('information_schema','mysql','performance_schema','sys') ORDER BY SCHEMA_NAME"
             }
+            Driver::Clickhouse => {
+                "SELECT name FROM system.databases WHERE name NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema') \
+                 ORDER BY name = currentDatabase() DESC, name"
+            }
             Driver::Mssql => {
                 "SELECT name FROM sys.schemas WHERE name NOT IN ('sys','INFORMATION_SCHEMA','guest') AND name NOT LIKE 'db[_]%' \
                  ORDER BY CASE WHEN name = 'dbo' THEN 0 ELSE 1 END, name"
@@ -613,6 +635,7 @@ impl Session {
             Driver::Postgres => "SELECT current_schema()",
             Driver::Mysql => "SELECT DATABASE()",
             Driver::Mssql => "SELECT SCHEMA_NAME()",
+            Driver::Clickhouse => "SELECT currentDatabase()",
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Ok(Some("main".into())),
         };
@@ -631,6 +654,10 @@ impl Session {
             Driver::Mysql => format!(
                 "SELECT TABLE_NAME, TABLE_TYPE, TABLE_ROWS FROM information_schema.TABLES \
                  WHERE TABLE_SCHEMA = {lit} ORDER BY TABLE_NAME"
+            ),
+            Driver::Clickhouse => format!(
+                "SELECT name, multiIf(engine = 'View', 'view', engine = 'MaterializedView', 'm', engine IN ('Dictionary', 'URL', 'MySQL', 'PostgreSQL', 'S3'), 'f', 'table'), \
+                 total_rows FROM system.tables WHERE database = {lit} AND NOT is_temporary ORDER BY name"
             ),
             Driver::Mssql => format!(
                 "SELECT o.name, RTRIM(o.type), (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
@@ -698,6 +725,16 @@ impl Session {
                 );
                 self.text_rows(&sql).await?.into_iter().map(|r| column_from(r, |v| v == "YES", |v| v == "PRI")).collect()
             }
+            Driver::Clickhouse => {
+                let sql = format!(
+                    "SELECT name, type, if(type LIKE 'Nullable(%' OR type LIKE 'LowCardinality(Nullable(%', '1', '0'), \
+                     if(default_kind = '', NULL, default_expression), if(is_in_primary_key, '1', '0'), \
+                     multiIf(is_in_primary_key, 'PRI', is_in_sorting_key, 'MUL', ''), \
+                     multiIf(default_kind IN ('MATERIALIZED', 'ALIAS', 'EPHEMERAL'), lower(default_kind), '') \
+                     FROM system.columns WHERE database = {s} AND table = {t} ORDER BY position"
+                );
+                self.text_rows(&sql).await?.into_iter().map(|r| column_from(r, |v| v == "1", |v| v == "1")).collect()
+            }
             Driver::Mssql => {
                 let obj = d.quote_literal(&d.qualified(schema, table));
                 let sql = format!(
@@ -751,6 +788,14 @@ impl Session {
                  IF(INDEX_NAME = 'PRIMARY', '1', '0'), LOWER(INDEX_TYPE), GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ') \
                  FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = {s} AND TABLE_NAME = {t} \
                  GROUP BY INDEX_NAME, NON_UNIQUE, INDEX_TYPE ORDER BY INDEX_NAME = 'PRIMARY' DESC, INDEX_NAME"
+            ),
+            // The sorting key acts as the primary index; data-skipping indexes come after it.
+            Driver::Clickhouse => format!(
+                "SELECT 'PRIMARY', concat('ORDER BY (', sorting_key, ')'), '0', '1', engine, sorting_key \
+                 FROM system.tables WHERE database = {s} AND name = {t} AND sorting_key != '' \
+                 UNION ALL \
+                 SELECT name, concat('INDEX ', name, ' ', expr, ' TYPE ', type_full, ' GRANULARITY ', toString(granularity)), '0', '0', type, expr \
+                 FROM system.data_skipping_indices WHERE database = {s} AND table = {t}"
             ),
             Driver::Mssql => format!(
                 "SELECT i.name, CASE WHEN i.is_primary_key = 1 THEN 'PRIMARY KEY ' WHEN i.is_unique = 1 THEN 'UNIQUE ' ELSE '' END \
@@ -806,6 +851,9 @@ impl Session {
             Driver::Mysql => Some(format!(
                 "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IF(COLUMN_KEY = 'PRI', '1', '0') FROM information_schema.COLUMNS \
                  WHERE TABLE_SCHEMA = {s} ORDER BY TABLE_NAME, ORDINAL_POSITION"
+            )),
+            Driver::Clickhouse => Some(format!(
+                "SELECT table, name, type, if(is_in_primary_key, '1', '0') FROM system.columns WHERE database = {s} ORDER BY table, position"
             )),
             Driver::Mssql => Some(format!(
                 "SELECT o.name, c.name, {MS_TYPE}, CASE WHEN EXISTS (SELECT 1 FROM sys.indexes i JOIN sys.index_columns ic \
@@ -891,6 +939,8 @@ impl Session {
                     ),
                 )
             }
+            // ClickHouse has no foreign keys or triggers.
+            Driver::Clickhouse => return Ok(TableRelations { outgoing: vec![], incoming: vec![], triggers: vec![] }),
             Driver::Mssql => {
                 let obj = d.quote_literal(&d.qualified(schema, table));
                 (
@@ -937,6 +987,7 @@ impl Session {
                    '` FOR EACH ROW ', ACTION_STATEMENT) \
                  FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = {s} AND EVENT_OBJECT_TABLE = {t} ORDER BY ACTION_ORDER"
             ),
+            Driver::Clickhouse => unreachable!("returned above"),
             Driver::Mssql => format!(
                 "SELECT tr.name, CASE WHEN tr.is_instead_of_trigger = 1 THEN 'INSTEAD OF' ELSE 'AFTER' END, \
                  (SELECT STRING_AGG(te.type_desc, ', ') FROM sys.trigger_events te WHERE te.object_id = tr.object_id), \
@@ -1063,6 +1114,37 @@ impl Session {
                 .collect();
                 let ddl = first(self.text_rows(&format!("SHOW CREATE TABLE {}", d.qualified(schema, table))).await?);
                 out.ddl = ddl.into_iter().nth(1).flatten();
+            }
+            Driver::Clickhouse => {
+                let r = first(
+                    self.text_rows(&format!(
+                        "SELECT t.total_rows, t.total_bytes, t.engine, t.comment, toString(t.metadata_modification_time), t.create_table_query, \
+                         t.sorting_key, t.partition_key, \
+                         (SELECT toString(count()) FROM system.parts p WHERE p.database = {s} AND p.table = {t} AND p.active), \
+                         (SELECT toString(sum(data_compressed_bytes)) FROM system.columns c WHERE c.database = {s} AND c.table = {t}), \
+                         (SELECT toString(sum(data_uncompressed_bytes)) FROM system.columns c WHERE c.database = {s} AND c.table = {t}) \
+                         FROM system.tables t WHERE t.database = {s} AND t.name = {t}"
+                    ))
+                    .await?,
+                );
+                let mut it = r.into_iter();
+                let mut v = || it.next().flatten();
+                out.rows_estimate = num(v());
+                out.total_bytes = num(v());
+                out.engine = v();
+                out.comment = v().filter(|c| !c.is_empty());
+                out.updated = v();
+                out.ddl = v();
+                out.stats = [
+                    stat("Sorting key", v(), "text"),
+                    stat("Partition key", v(), "text"),
+                    stat("Active parts", v(), "number"),
+                    stat("Compressed size", v().filter(|x| x != "0"), "bytes"),
+                    stat("Uncompressed size", v().filter(|x| x != "0"), "bytes"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
             }
             Driver::Mssql => {
                 let obj = d.quote_literal(&d.qualified(schema, table));
@@ -1244,6 +1326,8 @@ impl Session {
             Pool::Pg(p) => guarded!(p, "BEGIN READ ONLY", "SET LOCAL statement_timeout = 15000", pg_cell),
             Pool::My(p) => guarded!(p, "START TRANSACTION READ ONLY", "SET SESSION MAX_EXECUTION_TIME = 15000", my_cell),
             Pool::Lite(p) => guarded!(p, "BEGIN", "SELECT 1", lite_cell),
+            // The server enforces read-only mode and the time limit.
+            Pool::Ch(c) => vec![c.query(sql, max_rows, None, &[("readonly", "2".into()), ("max_execution_time", "15".into())]).await?],
             // SQL Server has no read-only transactions: the statement is
             // validated by ai_guard, then run in a transaction that is
             // always rolled back, with a client-side timeout.
@@ -1309,7 +1393,7 @@ impl Session {
         let from = d.qualified(schema, table);
 
         // Postgres needs explicit casts because parameters are bound as text.
-        let types: HashMap<String, String> = if d == Driver::Postgres {
+        let types: HashMap<String, String> = if matches!(d, Driver::Postgres | Driver::Clickhouse) {
             self.table_structure(schema, table).await?.columns.into_iter().map(|c| (c.name, c.data_type)).collect()
         } else {
             HashMap::new()
@@ -1394,6 +1478,7 @@ impl Session {
             Pool::My(p) => exec_tx!(p),
             Pool::Lite(p) => exec_tx!(p),
             Pool::Ms(p) => self.ms_exec_tx(p, stmts).await?,
+            Pool::Ch(c) => self.ch_exec(c, &from, stmts).await?,
         })
     }
 
@@ -1414,6 +1499,43 @@ impl Session {
             conn.discard();
         }
         out
+    }
+
+    /// ClickHouse has no transactions, so each change is checked first: an
+    /// update or delete must match exactly one row before it is sent.
+    /// Updates are mutations, run synchronously so the grid shows the result.
+    async fn ch_exec(&self, c: &crate::clickhouse::ChClient, from: &str, stmts: Vec<(String, Vec<Option<String>>, bool)>) -> AppResult<u64> {
+        let mut total = 0u64;
+        for (sql, binds, single) in stmts {
+            let names: Vec<String> = (1..=binds.len()).map(|i| format!("param_p{i}")).collect();
+            let mut params: Vec<(&str, String)> =
+                names.iter().zip(&binds).map(|(k, b)| (k.as_str(), b.clone().unwrap_or_else(|| "\\N".into()))).collect();
+            let (stmt, check) = if let Some(rest) = sql.strip_prefix(&format!("UPDATE {from} SET ")) {
+                let (set, cond) = rest.rsplit_once(" WHERE ").unwrap_or((rest, "1"));
+                (format!("ALTER TABLE {from} UPDATE {set} WHERE {cond}"), Some(cond.to_string()))
+            } else if let Some(cond) = sql.strip_prefix(&format!("DELETE FROM {from} WHERE ")) {
+                (sql.clone(), Some(cond.to_string()))
+            } else {
+                (sql.clone(), None)
+            };
+            if let (true, Some(cond)) = (single, &check) {
+                let n = c.query(&format!("SELECT count() FROM {from} WHERE {cond}"), 1, None, &params).await?;
+                let n: u64 = n.rows.first().and_then(|r| r.first().cloned().flatten()).and_then(|v| v.parse().ok()).unwrap_or(0);
+                if n != 1 {
+                    return Err(AppError::msg(format!(
+                        "Expected to change 1 row but {n} matched — this change was not saved. \
+                         The data may have changed; refresh and try again."
+                    )));
+                }
+            }
+            params.push(("mutations_sync", "2".into()));
+            let started = std::time::Instant::now();
+            let res = c.query(&stmt, 0, None, &params).await;
+            self.record(&stmt, started, res.as_ref().map(|_| "ok".to_string()).map_err(|e| e.to_string()));
+            let r = res?;
+            total += if check.is_some() { 1 } else { r.rows_affected.max(1) };
+        }
+        Ok(total)
     }
 
     async fn ms_exec_tx(&self, pool: &crate::mssql::MsPool, stmts: Vec<(String, Vec<Option<String>>, bool)>) -> AppResult<u64> {
@@ -1507,6 +1629,11 @@ impl Placeholders<'_> {
                 format!("CAST(CAST(${} AS text) AS {ty})", self.n)
             }
             Driver::Mssql => format!("@P{}", self.n),
+            // Typed query parameters, sent as param_pN.
+            Driver::Clickhouse => {
+                let ty = self.types.get(col).map(String::as_str).unwrap_or("String");
+                format!("CAST({{p{}:Nullable(String)}}, {})", self.n, Driver::Clickhouse.quote_literal(ty))
+            }
             _ => "?".into(),
         }
     }

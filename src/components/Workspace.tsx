@@ -309,7 +309,7 @@ export function Sidebar({ session }: { session: Session }) {
               size="sm"
               className="w-full"
               value={session.schema}
-              title={c.driver === "mysql" ? "Database" : "Schema"}
+              title={c.driver === "mysql" || c.driver === "clickhouse" ? "Database" : "Schema"}
               options={session.schemas.map((s) => ({ value: s, label: s }))}
               onChange={(v) => setSchema(session.id, v)}
             />

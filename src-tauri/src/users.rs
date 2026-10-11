@@ -69,6 +69,16 @@ impl Session {
                     _ => self.run_script(users, 10_000).await?,
                 }
             }
+            Driver::Clickhouse => self
+                .run_script(
+                    "SELECT u.name, '', '1', if(countIf(g.access_type = 'ALL' AND g.database IS NULL) > 0, '1', '0'), '0', '0', '0', NULL, \
+                     arrayStringConcat(u.default_roles_list, ', ') \
+                     FROM system.users u LEFT JOIN system.grants g ON g.user_name = u.name \
+                     GROUP BY u.name, u.default_roles_list ORDER BY u.name",
+                    10_000,
+                )
+                .await
+                .map_err(|e| AppError::msg(format!("Can't list accounts: {e}. Your user needs the SHOW USERS privilege.")))?,
             Driver::Redis => return Err(crate::error::not_sql()),
             Driver::Sqlite => return Err(AppError::msg("SQLite has no user accounts")),
         };
@@ -119,6 +129,7 @@ impl Session {
                 )
             }
             Driver::Mysql => format!("SHOW GRANTS FOR {}@{}", d.quote_literal(name), d.quote_literal(host)),
+            Driver::Clickhouse => format!("SHOW GRANTS FOR {}", d.quote_ident(name)),
             Driver::Mssql => {
                 let r = d.quote_literal(name);
                 format!(

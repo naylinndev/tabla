@@ -10,6 +10,7 @@ pub(crate) mod test_lock {
 mod alter;
 #[cfg(debug_assertions)]
 mod bridge;
+mod clickhouse;
 mod commands;
 mod config;
 mod db;

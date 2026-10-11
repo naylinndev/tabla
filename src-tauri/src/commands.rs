@@ -194,7 +194,7 @@ pub fn scan_env_dir(dir: &Path) -> AppResult<Vec<EnvUrl>> {
             let lower = value.to_ascii_lowercase();
             let is_db = [
                 "postgres://", "postgresql://", "mysql://", "mariadb://", "sqlite:", "file:", "redis://", "rediss://",
-                "sqlserver://", "mssql://", "jdbc:sqlserver://",
+                "sqlserver://", "mssql://", "jdbc:sqlserver://", "clickhouse://", "clickhouses://",
             ]
             .iter()
             .any(|p| lower.starts_with(p))

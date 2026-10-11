@@ -1,14 +1,14 @@
 import type { ColumnMeta, Driver, ResultSet } from "./api";
 
 export function quoteIdent(driver: Driver, s: string): string {
-  if (driver === "mysql") return "`" + s.replace(/`/g, "``") + "`";
+  if (driver === "mysql" || driver === "clickhouse") return "`" + s.replace(/`/g, "``") + "`";
   if (driver === "mssql") return "[" + s.replace(/]/g, "]]") + "]";
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
 export function quoteLiteral(driver: Driver, s: string): string {
   let v = s.replace(/'/g, "''");
-  if (driver === "mysql") v = v.replace(/\\/g, "\\\\");
+  if (driver === "mysql" || driver === "clickhouse") v = v.replace(/\\/g, "\\\\");
   // N'' keeps non-ASCII text intact on SQL Server.
   return driver === "mssql" ? `N'${v}'` : `'${v}'`;
 }
@@ -51,10 +51,11 @@ export function buildFilter(driver: Driver, filters: Filter[], join: "AND" | "OR
     .filter((f) => f.enabled && f.column)
     .map((f) => {
       const col = quoteIdent(driver, f.column);
-      const asText = driver === "postgres" ? `${col}::text` : col;
-      const like = driver === "postgres" ? "ILIKE" : "LIKE";
+      const asText = driver === "postgres" ? `${col}::text` : driver === "clickhouse" ? `toString(${col})` : col;
+      const like = driver === "postgres" || driver === "clickhouse" ? "ILIKE" : "LIKE";
       const lit = (v: string) => quoteLiteral(driver, v);
-      const esc = driver === "mysql" ? "" : " ESCAPE '\\'";
+      // MySQL and ClickHouse already treat backslash as the LIKE escape.
+      const esc = driver === "mysql" || driver === "clickhouse" ? "" : " ESCAPE '\\'";
       switch (f.op) {
         case "is null":
           return `${col} IS NULL`;

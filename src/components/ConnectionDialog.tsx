@@ -16,7 +16,22 @@ const TAGS: { value: EnvTag; label: string }[] = [
   { value: "production", label: "Production" },
 ];
 type DialogTab = "connection" | "ssh" | "ssl" | "options";
-const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433 };
+const DEFAULT_PORT: Record<Driver, number> = { postgres: 5432, mysql: 3306, sqlite: 0, redis: 6379, mssql: 1433, clickhouse: 8123 };
+
+/** clickhouse://, ch:// and ClickHouse Cloud https:// URLs. Native ports map to the HTTP ones. */
+function parseClickhouse(u: URL, scheme: string): Partial<ConnectionConfig> {
+  const tls = scheme === "https" || scheme === "clickhouses" || u.searchParams.get("secure") === "true" || u.port === "8443" || u.port === "9440";
+  const port = !u.port ? (tls ? 8443 : 8123) : u.port === "9000" ? 8123 : u.port === "9440" ? 8443 : +u.port;
+  return {
+    driver: "clickhouse",
+    host: decodeURIComponent(u.hostname) || "localhost",
+    port,
+    user: decodeURIComponent(u.username) || "default",
+    password: u.password ? decodeURIComponent(u.password) : undefined,
+    database: decodeURIComponent(u.pathname.replace(/^\//, "")) || u.searchParams.get("database") || "default",
+    sslMode: tls ? "verify-full" : "disable",
+  };
+}
 
 /**
  * SQL Server connection strings in the forms people copy from Azure and
@@ -80,6 +95,8 @@ export function parseUrl(raw: string): Partial<ConnectionConfig> | null {
   try {
     const u = new URL(raw.trim());
     const scheme = u.protocol.replace(":", "");
+    if (/^(clickhouses?|ch)$/.test(scheme) || (/^https?$/.test(scheme) && (/clickhouse/i.test(u.hostname) || ["8123", "8443"].includes(u.port))))
+      return parseClickhouse(u, scheme);
     const driver: Driver | null = /^postgres(ql)?$/.test(scheme)
       ? "postgres"
       : /^(mysql|mariadb)$/.test(scheme)
@@ -462,7 +479,7 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
               </div>
             </div>
             <div className="field">
-                <label>{f.driver === "mysql" ? "Database (optional)" : f.driver === "redis" ? "Database index (0–15)" : "Database"}</label>
+                <label>{f.driver === "mysql" || f.driver === "clickhouse" ? "Database (optional)" : f.driver === "redis" ? "Database index (0–15)" : "Database"}</label>
                 <input
                   className="input mono"
                   placeholder={provider.database ?? ""}
@@ -652,6 +669,11 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
             {f.driver === "redis" && (
               <p className="hint">
                 <Info /> Require turns on TLS (rediss://). Prefer and Disable connect without TLS. Verify also checks the certificate.
+              </p>
+            )}
+            {f.driver === "clickhouse" && (
+              <p className="hint">
+                <Info /> Any mode except Disable uses HTTPS. Prefer and Require skip the certificate check; Verify checks it.
               </p>
             )}
             {f.driver === "mssql" && (

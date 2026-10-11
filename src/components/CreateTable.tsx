@@ -20,18 +20,21 @@ const TYPES: Record<string, string[]> = {
   postgres: ["bigint", "integer", "text", "varchar(255)", "boolean", "numeric(12,2)", "double precision", "date", "timestamptz", "jsonb", "uuid", "bytea"],
   mysql: ["bigint", "int", "varchar(255)", "text", "tinyint(1)", "decimal(12,2)", "double", "date", "datetime", "timestamp", "json", "char(36)", "blob"],
   sqlite: ["INTEGER", "TEXT", "REAL", "NUMERIC", "BLOB"],
+  clickhouse: ["UInt64", "UInt32", "Int64", "String", "LowCardinality(String)", "Bool", "Float64", "Decimal(12,2)", "Date", "DateTime", "DateTime64(3)", "UUID", "Array(String)"],
   mssql: ["bigint", "int", "nvarchar(255)", "nvarchar(max)", "bit", "decimal(12,2)", "float", "date", "datetime2", "datetimeoffset", "uniqueidentifier", "varbinary(max)"],
 };
 
 const newKey = () => crypto.randomUUID();
 
 function idColumn(d: Driver): Col {
+  // ClickHouse has no auto-increment; ids usually come from the application.
+  if (d === "clickhouse") return { key: newKey(), name: "id", type: "UInt64", pk: true, auto: false, nullable: false, def: "" };
   return { key: newKey(), name: "id", type: d === "sqlite" ? "INTEGER" : "bigint", pk: true, auto: true, nullable: false, def: "" };
 }
 
 function timestamps(d: Driver): Col[] {
-  const t = d === "postgres" ? "timestamptz" : d === "mysql" ? "timestamp" : d === "mssql" ? "datetime2" : "TEXT";
-  const now = d === "postgres" ? "now()" : d === "mssql" ? "SYSDATETIME()" : "CURRENT_TIMESTAMP";
+  const t = d === "postgres" ? "timestamptz" : d === "mysql" ? "timestamp" : d === "mssql" ? "datetime2" : d === "clickhouse" ? "DateTime" : "TEXT";
+  const now = d === "postgres" || d === "clickhouse" ? "now()" : d === "mssql" ? "SYSDATETIME()" : "CURRENT_TIMESTAMP";
   return [
     { key: newKey(), name: "created_at", type: t, pk: false, auto: false, nullable: false, def: now },
     { key: newKey(), name: "updated_at", type: t, pk: false, auto: false, nullable: false, def: now },
@@ -41,6 +44,16 @@ function timestamps(d: Driver): Col[] {
 /** CREATE TABLE for each engine, with auto-increment written the idiomatic way. */
 export function createTableSql(d: Driver, schema: string, table: string, cols: Col[]): string {
   const q = (s: string) => quoteIdent(d, s);
+  if (d === "clickhouse") {
+    // Nullability is part of the type; the primary key becomes the MergeTree sorting key.
+    const lines = cols.map((c) => {
+      const ty = c.type.trim();
+      const nullable = c.nullable && !c.pk && !/^(Nullable|LowCardinality\(Nullable)\(/.test(ty);
+      return `  ${q(c.name.trim())} ${nullable ? `Nullable(${ty})` : ty}${c.def.trim() ? ` DEFAULT ${c.def.trim()}` : ""}`;
+    });
+    const pks = cols.filter((c) => c.pk).map((c) => q(c.name.trim()));
+    return `CREATE TABLE ${q(schema)}.${q(table)} (\n${lines.join(",\n")}\n) ENGINE = MergeTree\nORDER BY ${pks.length ? `(${pks.join(", ")})` : "tuple()"}`;
+  }
   const pks = cols.filter((c) => c.pk);
   const singleAutoPk = pks.length === 1 && pks[0].auto;
   const lines = cols.map((c) => {
@@ -65,7 +78,7 @@ export function createTableSql(d: Driver, schema: string, table: string, cols: C
 export function CreateTableDialog({ session, onClose }: { session: Session; onClose(): void }) {
   const d = session.connection.driver;
   const [name, setName] = useState("");
-  const [cols, setCols] = useState<Col[]>(() => [idColumn(d), { key: newKey(), name: "name", type: d === "sqlite" ? "TEXT" : d === "mysql" ? "varchar(255)" : d === "mssql" ? "nvarchar(255)" : "text", pk: false, auto: false, nullable: true, def: "" }]);
+  const [cols, setCols] = useState<Col[]>(() => [idColumn(d), { key: newKey(), name: "name", type: d === "sqlite" ? "TEXT" : d === "mysql" ? "varchar(255)" : d === "mssql" ? "nvarchar(255)" : d === "clickhouse" ? "String" : "text", pk: false, auto: false, nullable: true, def: "" }]);
   const [dragKey, setDragKey] = useState<string | null>(null);
 
   const problems = useMemo(() => {
@@ -77,6 +90,7 @@ export function CreateTableDialog({ session, onClose }: { session: Session; onCl
     if (names.some((n) => !n)) p.push("Every column needs a name");
     if (new Set(names).size !== names.length) p.push("Column names must be unique");
     if (cols.some((c) => !c.type.trim())) p.push("Every column needs a type");
+    if (d === "clickhouse" && cols.some((c) => c.auto)) p.push("ClickHouse has no auto-increment; generate ids in your app or use generateUUIDv4()");
     if (cols.filter((c) => c.auto).length > 1) p.push("Only one auto-increment column is allowed");
     if (cols.some((c) => c.auto && !c.pk)) p.push("Auto-increment columns must be the primary key");
     if (d === "sqlite" && cols.some((c) => c.auto) && cols.filter((c) => c.pk).length > 1) p.push("SQLite auto-increment needs a single-column primary key");
@@ -100,7 +114,7 @@ export function CreateTableDialog({ session, onClose }: { session: Session; onCl
     <SqlConfirm
       session={session}
       title="Create table"
-      description={`In ${d === "mysql" ? "database" : "schema"} ${session.schema}`}
+      description={`In ${d === "mysql" || d === "clickhouse" ? "database" : "schema"} ${session.schema}`}
       statements={sql ? [sql] : []}
       displayStatements={sql ? [sql] : problems.map((p) => `-- ${p}`)}
       confirmLabel="Create table"

@@ -4,7 +4,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
-import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLite, StandardSQL, sql } from "@codemirror/lang-sql";
 import { format as formatSql } from "sql-formatter";
 import {
   AlertTriangle,
@@ -51,7 +51,7 @@ const baseTheme = EditorView.theme({
   ".cm-gutterElement": { padding: "0 6px 0 14px !important" },
 });
 
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL, clickhouse: StandardSQL };
 
 export function QueryView({ session, tab, active }: { session: Session; tab: QueryTab; active: boolean }) {
   const updateTab = useApp((s) => s.updateTab);
@@ -196,7 +196,7 @@ export function QueryView({ session, tab, active }: { session: Session; tab: Que
     if (!view) return;
     try {
       const d = session.connection.driver;
-      const lang = d === "postgres" ? "postgresql" : d === "mysql" ? "mysql" : d === "mssql" ? "transactsql" : "sqlite";
+      const lang = d === "postgres" ? "postgresql" : d === "mysql" ? "mysql" : d === "mssql" ? "transactsql" : d === "clickhouse" ? "clickhouse" : "sqlite";
       const out = formatSql(view.state.doc.toString(), { language: lang, keywordCase: "upper", tabWidth: 2 });
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: out } });
     } catch (e) {

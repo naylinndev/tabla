@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
-import { MSSQL, MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { MSSQL, MySQL, PostgreSQL, SQLite, StandardSQL, sql } from "@codemirror/lang-sql";
 import { ArrowRight, Code2, ExternalLink, Info, Minus, Plus, Power, RefreshCw } from "lucide-react";
 import { api, errorMessage, type Driver, type ForeignKey, type TableRelations, type TriggerInfo } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
@@ -237,7 +237,7 @@ const highlight = HighlightStyle.define([
   { tag: [t.number, t.bool, t.null], color: "var(--syn-number)" },
   { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syn-comment)" },
 ]);
-const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL };
+const DIALECT: Record<string, typeof PostgreSQL> = { postgres: PostgreSQL, mysql: MySQL, sqlite: SQLite, redis: PostgreSQL, mssql: MSSQL, clickhouse: StandardSQL };
 
 function triggerTemplate(d: Driver, schema: string, table: string): string {
   const tq = `${quoteIdent(d, schema)}.${quoteIdent(d, table)}`;
