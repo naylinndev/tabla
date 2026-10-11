@@ -58,7 +58,8 @@ for PostgreSQL, MySQL, MariaDB, SQLite, Redis and the clouds they run on.
 **Homebrew (macOS)**, once the first release is published:
 
 ```bash
-brew install --cask naylinndev/tabla/tabla
+brew tap naylinndev/tabla
+brew install --cask tabla
 ```
 
 This also puts `tabla` on your PATH, so AI tools can run `tabla mcp`.
