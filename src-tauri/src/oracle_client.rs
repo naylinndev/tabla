@@ -81,10 +81,10 @@ pub fn init() -> AppResult<()> {
     let mut p = oracle::InitParams::new();
     p.default_driver_name("Tabla").map_err(crate::ora::err)?;
     // On Linux the library path is set before the process starts (see `prepare_process`).
-    if !cfg!(target_os = "linux") {
-        if let Some(dir) = managed_lib_dir() {
-            p.oracle_client_lib_dir(dir.to_string_lossy().as_ref()).map_err(crate::ora::err)?;
-        }
+    if !cfg!(target_os = "linux")
+        && let Some(dir) = managed_lib_dir()
+    {
+        p.oracle_client_lib_dir(dir.to_string_lossy().as_ref()).map_err(crate::ora::err)?;
     }
     match p.init() {
         Ok(_) => {

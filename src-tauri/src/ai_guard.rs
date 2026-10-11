@@ -1,8 +1,10 @@
 //! Validation for SQL sent by AI assistants. Defense in depth on top of the
 //! read-only transaction in `Session::run_readonly`:
-//!   1. exactly one statement (quote/comment/dollar-quote aware split),
-//!   2. the statement must start with a read keyword,
-//!   3. known side-effect escape hatches are rejected.
+//!
+//! 1. exactly one statement (quote/comment/dollar-quote aware split),
+//! 2. the statement must start with a read keyword,
+//! 3. known side-effect escape hatches are rejected.
+//!
 //! For a hard guarantee, connect AI access with a read-only database user.
 
 const READ_KEYWORDS: &[&str] = &["select", "with", "show", "explain", "describe", "desc", "values", "table"];
@@ -48,9 +50,8 @@ pub fn split_statements(sql: &str) -> Vec<String> {
             q @ (b'\'' | b'"' | b'`') => {
                 i += 1;
                 while i < b.len() {
-                    if b[i] == b'\\' && q == b'\'' {
-                        i += 2;
-                    } else if b[i] == q && b.get(i + 1) == Some(&q) {
+                    // A backslash escape (single quotes) or a doubled quote.
+                    if (b[i] == b'\\' && q == b'\'') || (b[i] == q && b.get(i + 1) == Some(&q)) {
                         i += 2;
                     } else if b[i] == q {
                         break;

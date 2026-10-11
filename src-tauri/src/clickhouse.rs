@@ -130,10 +130,10 @@ impl ChClient {
                             return Err(AppError::msg(clean_error(&line)));
                         }
                         set.rows.push(split_tsv(&line));
-                        if let Some(p) = progress {
-                            if set.rows.len() % 1000 == 0 {
-                                p(set.rows.len());
-                            }
+                        if let Some(p) = progress
+                            && set.rows.len() % 1000 == 0
+                        {
+                            p(set.rows.len());
                         }
                     }
                 }

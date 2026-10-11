@@ -190,10 +190,7 @@ impl MongoSession {
         let info = self.client.database("admin").run_command(doc! { "buildInfo": 1 }).await.map_err(m)?;
         let version = info.get_str("version").unwrap_or_default().to_string();
         // Users limited to one database may not be allowed to list them all.
-        let mut databases = match self.client.list_database_names().authorized_databases(true).await {
-            Ok(d) => d,
-            Err(_) => vec![],
-        };
+        let mut databases: Vec<String> = self.client.list_database_names().authorized_databases(true).await.unwrap_or_default();
         if !databases.contains(&self.default_db) {
             databases.push(self.default_db.clone());
         }
@@ -578,10 +575,10 @@ pub fn ai_check(line: &str) -> AppResult<()> {
         (call.method, stages)
     };
     let blocked = ["$out", "$merge", "$currentOp", "$listSessions", "$listLocalSessions"];
-    if let Some(stages) = stages {
-        if let Some(st) = stages.iter().filter_map(Bson::as_document).find_map(|d| blocked.iter().find(|b| d.contains_key(**b))) {
-            return Err(AppError::msg(format!("The {st} stage is not allowed in `{name}`: AI access is read-only")));
-        }
+    if let Some(stages) = stages
+        && let Some(st) = stages.iter().filter_map(Bson::as_document).find_map(|d| blocked.iter().find(|b| d.contains_key(**b)))
+    {
+        return Err(AppError::msg(format!("The {st} stage is not allowed in `{name}`: AI access is read-only")));
     }
     Ok(())
 }
@@ -746,10 +743,10 @@ pub fn parse_doc(text: &str) -> AppResult<Document> {
 fn parse_cell(text: &str) -> Bson {
     let t = text.trim();
     let looks_json = t.starts_with(['{', '[', '"']) || t == "true" || t == "false" || t == "null" || t.parse::<f64>().is_ok() || t.contains('(');
-    if looks_json {
-        if let Ok(b) = parse_value(t) {
-            return b;
-        }
+    if looks_json
+        && let Ok(b) = parse_value(t)
+    {
+        return b;
     }
     Bson::String(text.to_string())
 }
@@ -804,7 +801,7 @@ fn page(docs: Vec<Document>, total: Option<u64>) -> FindPage {
         columns.remove(0);
     }
     let rows = docs.iter().map(|d| columns.iter().map(|c| d.get(c).and_then(display)).collect()).collect();
-    let ids = docs.iter().map(|d| d.get("_id").map(|v| compact_bson(v)).unwrap_or_default()).collect();
+    let ids = docs.iter().map(|d| d.get("_id").map(compact_bson).unwrap_or_default()).collect();
     let docs = docs.into_iter().map(|d| pretty(Bson::Document(d))).collect();
     FindPage { columns, rows, docs, ids, total }
 }
@@ -967,7 +964,7 @@ mod integration {
         s.replace(db, "people", &id, "{name: 'Ann B', age: 33}").await.unwrap();
         assert!(s.replace(db, "people", &id, "{_id: 5, name: 'x'}").await.is_err());
         let new_id = s.insert(db, "people", "{name: 'Dee'}").await.unwrap();
-        assert_eq!(s.delete(db, "people", &[new_id.clone()]).await.unwrap(), 1);
+        assert_eq!(s.delete(db, "people", std::slice::from_ref(&new_id)).await.unwrap(), 1);
         assert!(s.delete(db, "people", &[new_id]).await.is_err());
         assert!(s.set_field(db, "people", "{\"$oid\": \"000000000000000000000000\"}", "a", Some("1")).await.is_err());
 

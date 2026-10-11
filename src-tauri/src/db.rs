@@ -24,6 +24,8 @@ use crate::{
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_BINARY_PREVIEW: usize = 2048;
 
+// One per open connection, so the size of the largest variant doesn't matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Pool {
     Pg(PgPool),
     My(MySqlPool),
@@ -453,13 +455,13 @@ impl Session {
         };
 
         // A SELECT with zero rows carries no column metadata; ask the server.
-        if sets.len() <= 1 && sets.first().is_none_or(|s| s.columns.is_empty()) && returns_rows(sql) {
-            if let Some(columns) = self.describe(sql).await {
-                if sets.is_empty() {
-                    sets.push(ResultSet::default());
-                }
-                sets[0].columns = columns;
+        if sets.len() <= 1 && sets.first().is_none_or(|s| s.columns.is_empty()) && returns_rows(sql)
+            && let Some(columns) = self.describe(sql).await
+        {
+            if sets.is_empty() {
+                sets.push(ResultSet::default());
             }
+            sets[0].columns = columns;
         }
         Ok(sets)
     }
@@ -538,15 +540,14 @@ impl Session {
                 e
             }
         });
-        if let Ok(sets) = &mut res {
-            if sets.len() <= 1 && sets.first().is_none_or(|s| s.columns.is_empty()) && returns_rows(sql) {
-                if let Some(columns) = self.describe(sql).await {
-                    if sets.is_empty() {
-                        sets.push(ResultSet::default());
-                    }
-                    sets[0].columns = columns;
-                }
+        if let Ok(sets) = &mut res
+            && sets.len() <= 1 && sets.first().is_none_or(|s| s.columns.is_empty()) && returns_rows(sql)
+            && let Some(columns) = self.describe(sql).await
+        {
+            if sets.is_empty() {
+                sets.push(ResultSet::default());
             }
+            sets[0].columns = columns;
         }
         let outcome = match &res {
             Ok(sets) => Ok(sets.iter().map(|s| if s.columns.is_empty() { format!("{} affected", s.rows_affected) } else { format!("{} rows", s.rows.len()) }).collect::<Vec<_>>().join(", ")),
@@ -726,13 +727,11 @@ impl Session {
                 "SELECT o.name, RTRIM(o.type), (SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id = o.object_id AND p.index_id IN (0, 1)) \
                  FROM sys.objects o WHERE o.schema_id = SCHEMA_ID({lit}) AND o.type IN ('U', 'V') ORDER BY o.name"
             ),
-            Driver::Oracle => format!(
-                "SELECT table_name, 'table', num_rows FROM all_tables t WHERE owner = :s AND nested = 'NO' AND secondary = 'N' \
+            Driver::Oracle => "SELECT table_name, 'table', num_rows FROM all_tables t WHERE owner = :s AND nested = 'NO' AND secondary = 'N' \
                  AND dropped = 'NO' AND (iot_type IS NULL OR iot_type = 'IOT') \
                  AND NOT EXISTS (SELECT 1 FROM all_mviews m WHERE m.owner = t.owner AND m.mview_name = t.table_name) \
                  UNION ALL SELECT view_name, 'view', NULL FROM all_views WHERE owner = :s \
-                 UNION ALL SELECT mview_name, 'm', NULL FROM all_mviews WHERE owner = :s ORDER BY 1"
-            ),
+                 UNION ALL SELECT mview_name, 'm', NULL FROM all_mviews WHERE owner = :s ORDER BY 1".to_string(),
             Driver::Duckdb => format!(
                 "SELECT table_name, 'table', estimated_size FROM duckdb_tables() WHERE database_name = current_database() AND schema_name = {lit} \
                  UNION ALL SELECT view_name, 'view', NULL FROM duckdb_views() WHERE database_name = current_database() AND schema_name = {lit} \
@@ -1996,7 +1995,7 @@ fn column_from(r: Vec<Option<String>>, nullable: impl Fn(&str) -> bool, pk: impl
 }
 
 fn returns_rows(sql: &str) -> bool {
-    let head = sql.trim_start().split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+    let head = sql.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
     matches!(head.as_str(), "select" | "with" | "show" | "values" | "table" | "pragma" | "explain" | "describe" | "desc")
 }
 
@@ -2042,10 +2041,10 @@ async fn collect_with<Q, R: Row>(
                 }
                 cur.rows.push((0..row.len()).map(|i| cell(&row, i)).collect());
                 total += 1;
-                if let Some(p) = progress {
-                    if total % 1000 == 0 {
-                        p(total);
-                    }
+                if let Some(p) = progress
+                    && total.is_multiple_of(1000)
+                {
+                    p(total);
                 }
             }
         }
@@ -2089,9 +2088,7 @@ pub fn redact_secrets(sql: &str) -> String {
             let b = body.as_bytes();
             let mut j = 0;
             while j < b.len() {
-                if b[j] == b'\\' {
-                    j += 2;
-                } else if b[j] == b'\'' && b.get(j + 1) == Some(&b'\'') {
+                if b[j] == b'\\' || (b[j] == b'\'' && b.get(j + 1) == Some(&b'\'')) {
                     j += 2;
                 } else if b[j] == b'\'' {
                     break;

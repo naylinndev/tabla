@@ -41,10 +41,10 @@ pub struct MsConn<'a> {
 
 impl Drop for MsConn<'_> {
     fn drop(&mut self) {
-        if let Some(c) = self.client.take() {
-            if !self.broken {
-                self.pool.idle.lock().unwrap().push(c);
-            }
+        if let Some(c) = self.client.take()
+            && !self.broken
+        {
+            self.pool.idle.lock().unwrap().push(c);
         }
     }
 }
@@ -57,10 +57,10 @@ impl MsConn<'_> {
     /// Records whether an error means the connection can't be reused.
     /// Server errors (bad SQL, constraint violations) leave it healthy.
     pub fn check<T>(&mut self, r: Result<T, tiberius::error::Error>) -> AppResult<T> {
-        if let Err(e) = &r {
-            if !matches!(e, tiberius::error::Error::Server(_)) {
-                self.broken = true;
-            }
+        if let Err(e) = &r
+            && !matches!(e, tiberius::error::Error::Server(_))
+        {
+            self.broken = true;
         }
         Ok(r?)
     }
@@ -223,10 +223,10 @@ async fn run_batch(conn: &mut MsConn<'_>, sql: &str, max_rows: usize, progress: 
                         }
                         cur.rows.push(row.cells().map(|(_, d)| cell(d)).collect());
                         total += 1;
-                        if let Some(p) = progress {
-                            if total % 1000 == 0 {
-                                p(total);
-                            }
+                        if let Some(p) = progress
+                            && total.is_multiple_of(1000)
+                        {
+                            p(total);
                         }
                     }
                     Ok(None) => break,

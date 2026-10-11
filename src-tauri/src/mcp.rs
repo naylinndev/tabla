@@ -51,6 +51,8 @@ struct State {
     sessions: HashMap<String, Conn>,
 }
 
+// One per shared connection, so the size of the largest variant doesn't matter.
+#[allow(clippy::large_enum_variant)]
 enum Conn {
     Sql(Session),
     Redis(RedisSession),

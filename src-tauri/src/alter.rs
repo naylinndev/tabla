@@ -208,10 +208,10 @@ impl Session {
                     }
                 }
                 (Some(o), None) => {
-                    if d == Driver::Mssql {
-                        if let Some(dc) = self.mssql_default_constraint(&from, &o.name).await? {
-                            out.push(format!("ALTER TABLE {from} DROP CONSTRAINT {}", q(&dc)));
-                        }
+                    if d == Driver::Mssql
+                        && let Some(dc) = self.mssql_default_constraint(&from, &o.name).await?
+                    {
+                        out.push(format!("ALTER TABLE {from} DROP CONSTRAINT {}", q(&dc)));
                     }
                     out.push(format!("ALTER TABLE {from} DROP COLUMN {}", q(&o.name)));
                 }
@@ -266,11 +266,11 @@ impl Session {
                             let default_changed = default_of(o) != default_of(c);
                             // A default constraint blocks ALTER COLUMN, so drop it first and re-add after.
                             let mut had_default = false;
-                            if type_changed || default_changed {
-                                if let Some(dc) = self.mssql_default_constraint(&from, &o.name).await? {
-                                    out.push(format!("ALTER TABLE {from} DROP CONSTRAINT {}", q(&dc)));
-                                    had_default = true;
-                                }
+                            if (type_changed || default_changed)
+                                && let Some(dc) = self.mssql_default_constraint(&from, &o.name).await?
+                            {
+                                out.push(format!("ALTER TABLE {from} DROP CONSTRAINT {}", q(&dc)));
+                                had_default = true;
                             }
                             if type_changed {
                                 let null = if c.nullable { "NULL" } else { "NOT NULL" };
