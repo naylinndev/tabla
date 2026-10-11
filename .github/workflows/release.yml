@@ -174,11 +174,16 @@ jobs:
             echo "HOMEBREW_TAP_TOKEN is not set; skipping the cask update."
             exit 0
           fi
+          set -euo pipefail
           VERSION="${TAG#v}"
           mkdir dl
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "*.dmg" --dir dl
+          # Each DMG by name; a missing one must stop here, not leave an empty checksum.
+          for ARCH in aarch64 x64; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "Tabla_${VERSION}_${ARCH}.dmg" --dir dl
+          done
           ARM=$(sha256sum "dl/Tabla_${VERSION}_aarch64.dmg" | cut -d' ' -f1)
           INTEL=$(sha256sum "dl/Tabla_${VERSION}_x64.dmg" | cut -d' ' -f1)
+          [ ${#ARM} -eq 64 ] && [ ${#INTEL} -eq 64 ] || { echo "::error::Missing a DMG checksum"; exit 1; }
           sed -e "s/__VERSION__/${VERSION}/" -e "s/__SHA_ARM__/${ARM}/" -e "s/__SHA_INTEL__/${INTEL}/" \
             packaging/homebrew/tabla.rb > tabla.rb
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/${GITHUB_REPOSITORY_OWNER}/homebrew-tabla.git" tap
