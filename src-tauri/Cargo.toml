@@ -41,6 +41,7 @@ tokio-util = { version = "0.7.20", features = ["compat"] }
 chrono = "0.4.45"
 reqwest = { version = "0.13", default-features = false, features = ["query", "rustls", "stream"] }
 oracle = "0.6.3"
+ring = "0.17"
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 duckdb = { version = "1.10506.0", features = ["bundled", "json", "parquet"] }
 mongodb = "3"

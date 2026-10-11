@@ -222,6 +222,11 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
         "mcp_command" => json!(commands::mcp_info()?),
         "check_update" => json!(tokio::task::spawn_blocking(crate::updates::check).await.map_err(|e| AppError::msg(e.to_string()))??),
         "open_project_page" => Value::Null,
+        "load_app_state" => json!(crate::vault::load_state()?),
+        "save_app_state" => {
+            crate::vault::save_state(&arg(&a, "state")?)?;
+            Value::Null
+        }
         "oracle_client_status" => json!(tokio::task::spawn_blocking(crate::oracle_client::status).await.map_err(|e| AppError::msg(e.to_string()))?),
         other => return Err(AppError::msg(format!("bridge: unknown command {other}"))),
     })

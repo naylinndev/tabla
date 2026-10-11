@@ -6568,6 +6568,7 @@ dependencies = [
  "oracle",
  "redis",
  "reqwest",
+ "ring",
  "russh",
  "serde",
  "serde_json",

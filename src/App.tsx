@@ -8,6 +8,7 @@ import { AiConnect } from "./components/AiConnect";
 import { ConfirmDialogs } from "./components/Dialogs";
 import { RedisWorkspace } from "./components/RedisWorkspace";
 import { MongoWorkspace } from "./components/MongoWorkspace";
+import { localProblem } from "./lib/local";
 import { Toasts, isMac } from "./components/ui";
 
 function useTheme() {
@@ -81,6 +82,7 @@ export default function App() {
   useGlobalShortcuts();
   useEffect(() => {
     loadConnections();
+    if (localProblem) useApp.getState().toast(`History and open queries couldn't be loaded and won't be saved this session: ${localProblem}`, "error");
     // At most once a day, and only if enabled (Appearance menu).
     const t = setTimeout(() => useApp.getState().checkForUpdates(), 4000);
     return () => clearTimeout(t);

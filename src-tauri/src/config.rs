@@ -173,30 +173,24 @@ pub fn config_dir() -> AppResult<PathBuf> {
 
 fn store_path() -> AppResult<PathBuf> {
     let dir = config_dir()?;
-    fs::create_dir_all(&dir)?;
+    crate::vault::private_dir(&dir)?;
     Ok(dir.join("connections.json"))
 }
 
+/// Connection profiles, encrypted at rest (see `vault`).
 pub fn load() -> AppResult<Vec<ConnectionConfig>> {
     let path = store_path()?;
-    if !path.exists() {
-        return Ok(vec![]);
+    let Some(raw) = crate::vault::read(&path)? else { return Ok(vec![]) };
+    let list: Vec<ConnectionConfig> = serde_json::from_slice(&raw)?;
+    // Profiles saved by older versions were plain JSON: encrypt them now.
+    if !crate::vault::is_sealed(&fs::read(&path).unwrap_or_default()) {
+        let _ = write(&list);
     }
-    let raw = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&raw)?)
+    Ok(list)
 }
 
 fn write(list: &[ConnectionConfig]) -> AppResult<()> {
-    let path = store_path()?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, serde_json::to_string_pretty(list)?)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600))?;
-    }
-    fs::rename(tmp, path)?;
-    Ok(())
+    crate::vault::write(&store_path()?, serde_json::to_string_pretty(list)?.as_bytes())
 }
 
 pub fn upsert(mut cfg: ConnectionConfig) -> AppResult<ConnectionConfig> {

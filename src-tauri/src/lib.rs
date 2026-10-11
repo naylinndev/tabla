@@ -38,6 +38,7 @@ mod redis_db;
 mod ssh;
 mod updates;
 mod users;
+mod vault;
 
 /// Process setup that must happen before anything else (see `oracle_client::prepare_process`).
 pub fn prepare_process() {
@@ -108,6 +109,8 @@ pub fn run() {
             commands::apply_alter,
             commands::pick_sqlite_file,
             commands::pick_duckdb_file,
+            commands::load_app_state,
+            commands::save_app_state,
             commands::oracle_client_status,
             commands::install_oracle_client,
             commands::restart_app,

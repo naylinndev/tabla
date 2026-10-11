@@ -345,6 +345,8 @@ export const api = {
   /** Downloads Instant Client; resolves to true when Tabla must restart to load it. */
   installOracleClient: () => invoke<boolean>("install_oracle_client"),
   restartApp: () => invoke<void>("restart_app"),
+  loadAppState: () => invoke<Record<string, unknown>>("load_app_state"),
+  saveAppState: (state: Record<string, unknown>) => invoke<void>("save_app_state", { state }),
   pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>
     invoke<string | null>("export_file", { defaultName, contents }),

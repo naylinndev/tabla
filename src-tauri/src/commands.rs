@@ -529,6 +529,18 @@ pub async fn pick_sqlite_file(app: AppHandle) -> AppResult<Option<String>> {
     Ok(picked.and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()))
 }
 
+/// The app's saved state (history, drafts, saved queries…), decrypted.
+#[tauri::command]
+pub async fn load_app_state() -> AppResult<serde_json::Map<String, serde_json::Value>> {
+    tauri::async_runtime::spawn_blocking(crate::vault::load_state).await.map_err(|e| AppError::msg(e.to_string()))?
+}
+
+/// Encrypts and saves the app's state.
+#[tauri::command]
+pub async fn save_app_state(state: serde_json::Map<String, serde_json::Value>) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || crate::vault::save_state(&state)).await.map_err(|e| AppError::msg(e.to_string()))?
+}
+
 /// Whether Oracle Instant Client is available, and whether Tabla can install it.
 #[tauri::command]
 pub async fn oracle_client_status() -> AppResult<crate::oracle_client::ClientStatus> {

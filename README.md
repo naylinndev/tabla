@@ -110,11 +110,23 @@ Tabla connects straight to your database and touches nothing else.
 - **Passwords are stored only in your OS keychain**: macOS Keychain, Windows
   Credential Manager, or Secret Service (GNOME Keyring / KWallet) on Linux.
   They are never written to disk by Tabla and never returned to the UI.
-- **Connection profiles** (host, port, user, database, without the password) are
-  kept in your user config directory with owner-only permissions (`0600`):
-  - macOS: `~/Library/Application Support/dev.tabla.desktop/connections.json`
-  - Windows: `%APPDATA%\dev.tabla.desktop\connections.json`
-  - Linux: `~/.config/dev.tabla.desktop/connections.json`
+- **Your data is encrypted at rest.** Connection profiles (host, port, user,
+  database, never the password) and the app's own data (query history, open
+  query tabs, saved queries, filters) are encrypted with AES-256-GCM. The key is
+  random, generated on first launch and kept in the OS keychain, so another
+  program that opens Tabla's files sees only ciphertext. Nothing is kept in the
+  web view's storage. Files are written owner-only (`0600`, folder `0700`) in your
+  user config directory:
+  - macOS: `~/Library/Application Support/dev.tabla.desktop/`
+  - Windows: `%APPDATA%\dev.tabla.desktop\`
+  - Linux: `~/.config/dev.tabla.desktop/`
+
+  Data leaves Tabla only when you export it (always through a "Save as" dialog)
+  or copy it. Limits: on macOS the keychain asks you before giving the key to any other app; on
+  Windows and Linux, a program already running as your user can ask the keychain
+  for it, so keep untrusted software off your account. If no keychain is
+  available, files stay owner-only but unencrypted, and an encrypted file is never
+  replaced with a plain one.
 - **TLS** is supported with `prefer`, `require` and `verify-full` (CA plus hostname)
   modes, using rustls, plus custom CA and client certificate/key files (only their paths are stored).
 - **SSH tunnels** verify server host keys against `~/.ssh/known_hosts` (never modified)
@@ -254,6 +266,7 @@ src/                  React + TypeScript UI
   styles/app.css      Design tokens and styles (dark + light)
 src-tauri/            Rust backend
   src/config.rs       Connection profiles + keychain
+  src/vault.rs        Encryption at rest (key in the keychain)
   src/db.rs           Drivers, metadata, paging, transactional edits
   src/alter.rs        Structure editing (ALTER TABLE per engine)
   src/ssh.rs          SSH tunnels + host key verification
@@ -262,16 +275,6 @@ src-tauri/            Rust backend
   src/commands.rs     Tauri commands exposed to the UI
   src/bridge.rs       Debug-only HTTP bridge for UI tests
 ```
-
-## Roadmap
-
-- [x] SQL Server, ClickHouse, DuckDB, Oracle, MongoDB
-- [x] Create tables and indexes visually
-- [x] Saved queries and snippets
-- [x] Query cancellation and adjustable result size
-- [x] ER diagram
-- [x] Update notifications (daily check against GitHub Releases)
-- [x] One-click in-place updates (signed; switched on by adding the updater key, see [packaging/homebrew](packaging/homebrew/README.md#one-click-updates-recommended))
 
 ## Contributing
 

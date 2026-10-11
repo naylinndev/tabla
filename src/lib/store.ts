@@ -100,25 +100,9 @@ interface State {
 
 const uid = () => crypto.randomUUID();
 
-// localStorage is a convenience only (theme, drafts, history); it can be
-// unavailable, so every access is guarded. Never store secrets here.
-export const local = {
-  get<T>(key: string, fallback: T): T {
-    try {
-      const v = localStorage.getItem(key);
-      return v ? (JSON.parse(v) as T) : fallback;
-    } catch {
-      return fallback;
-    }
-  },
-  set(key: string, value: unknown) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      /* ignore */
-    }
-  },
-};
+// Saved app state (history, drafts, layout), encrypted on disk. Never passwords.
+export { local } from "./local";
+import { local } from "./local";
 
 const draftsKey = (connId: string) => `tabla.drafts.${connId}`;
 
