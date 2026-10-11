@@ -254,6 +254,20 @@ fn stored(account: &str) -> AppResult<Option<String>> {
     }
 }
 
+/// Which secrets are saved for a connection (never the secrets themselves),
+/// so the edit dialog can show them as saved.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretStatus {
+    pub password: bool,
+    pub ssh_secret: bool,
+}
+
+pub fn secret_status(id: &str) -> SecretStatus {
+    let has = |account: &str| matches!(stored(account), Ok(Some(s)) if !s.is_empty());
+    SecretStatus { password: has(id), ssh_secret: has(&ssh_account(id)) }
+}
+
 /// Password from the request if provided, otherwise from the keychain.
 pub fn resolve_password(cfg: &ConnectionConfig) -> AppResult<Option<String>> {
     match &cfg.password {

@@ -73,6 +73,7 @@ pub fn run() {
             commands::list_connections,
             commands::save_connection,
             commands::delete_connection,
+            commands::secret_status,
             commands::test_connection,
             commands::open_session,
             commands::close_session,

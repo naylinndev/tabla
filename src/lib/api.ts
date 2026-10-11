@@ -348,6 +348,8 @@ export const api = {
   installOracleClient: () => invoke<boolean>("install_oracle_client"),
   restartApp: () => invoke<void>("restart_app"),
   loadAppState: () => invoke<Record<string, unknown>>("load_app_state"),
+  /** Which secrets are saved in the keychain for a connection (never their values). */
+  secretStatus: (id: string) => invoke<{ password: boolean; sshSecret: boolean }>("secret_status", { id }),
   saveAppState: (state: Record<string, unknown>) => invoke<void>("save_app_state", { state }),
   pickFile: (kind: "ssh-key" | "cert") => invoke<string | null>("pick_file", { kind }),
   exportFile: (defaultName: string, contents: string) =>

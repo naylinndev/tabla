@@ -107,6 +107,26 @@ fn ssh_err(e: impl std::fmt::Display) -> AppError {
     AppError::msg(format!("SSH: {e}"))
 }
 
+/// The UI recognizes these two messages and asks for the passphrase in a dialog.
+pub const PASSPHRASE_NEEDED: &str = "This SSH key is protected by a passphrase. Enter it in the Passphrase field.";
+pub const PASSPHRASE_WRONG: &str = "That passphrase didn't unlock the SSH key.";
+
+/// Why the SSH server couldn't open a forward to the database, in plain words.
+fn forward_err(e: russh::Error, ssh_host: &str, target: &str, port: u16) -> AppError {
+    use russh::ChannelOpenFailure as F;
+    let why = match e {
+        russh::Error::ChannelOpenFailure(F::ConnectFailed) => format!(
+            "nothing is accepting connections on {target}:{port} there. Check the database's port and that it listens on {target} \
+             (try 127.0.0.1 instead of localhost)"
+        ),
+        russh::Error::ChannelOpenFailure(F::AdministrativelyProhibited) => {
+            "the server doesn't allow port forwarding (AllowTcpForwarding in sshd_config) for this user".into()
+        }
+        other => other.to_string(),
+    };
+    AppError::msg(format!("Signed in to {ssh_host} over SSH, but it couldn't reach the database: {why}."))
+}
+
 async fn auth_agent(session: &mut client::Handle<Client>, user: &str) -> AppResult<bool> {
     #[cfg(unix)]
     let mut agent = keys::agent::client::AgentClient::connect_env()
@@ -170,13 +190,13 @@ pub async fn open(ssh: &SshConfig, secret: Option<String>, target_host: &str, ta
                 return Err(AppError::msg("Choose your SSH private key file (for example ~/.ssh/id_ed25519)"));
             }
             let path = expand_home(ssh.key_path.trim());
-            let key = keys::load_secret_key(&path, secret.as_deref().filter(|s| !s.is_empty())).map_err(|e| {
-                let m = e.to_string();
-                if m.to_lowercase().contains("encrypted") || m.to_lowercase().contains("passphrase") {
-                    AppError::msg("This SSH key is protected by a passphrase. Enter it in the Passphrase field.")
-                } else {
-                    AppError::msg(format!("Couldn't read the SSH key {}: {m}", path.display()))
-                }
+            let passphrase = secret.as_deref().filter(|s| !s.is_empty());
+            let key = keys::load_secret_key(&path, passphrase).map_err(|e| match e {
+                keys::Error::KeyIsEncrypted if passphrase.is_none() => AppError::msg(PASSPHRASE_NEEDED),
+                keys::Error::IO(io) => AppError::msg(format!("Couldn't read the SSH key {}: {io}", path.display())),
+                // With a passphrase given, a key that won't decode almost always means the passphrase is wrong.
+                _ if passphrase.is_some() => AppError::msg(PASSPHRASE_WRONG),
+                e => AppError::msg(format!("Couldn't read the SSH key {}: {e}", path.display())),
             })?;
             let hash = session.best_supported_rsa_hash().await.map_err(ssh_err)?.flatten();
             session
@@ -195,6 +215,14 @@ pub async fn open(ssh: &SshConfig, secret: Option<String>, target_host: &str, ta
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let local_port = listener.local_addr()?.port();
+    // Reach the database once now: if the server can't, say why here instead of
+    // handing the driver a socket that just closes ("connection reset by peer").
+    // The channel is kept for the driver's first connection.
+    let first = session
+        .channel_open_direct_tcpip(target_host, target_port as u32, "127.0.0.1", local_port as u32)
+        .await
+        .map_err(|e| forward_err(e, &host, target_host, target_port))?;
+    let first = Arc::new(tokio::sync::Mutex::new(Some(first)));
     let session = Arc::new(session);
     let target_host = target_host.to_string();
     let task = tokio::spawn(async move {
@@ -202,8 +230,14 @@ pub async fn open(ssh: &SshConfig, secret: Option<String>, target_host: &str, ta
             let Ok((mut tcp, _)) = listener.accept().await else { break };
             let session = session.clone();
             let target = target_host.clone();
+            let first = first.clone();
             tokio::spawn(async move {
-                match session.channel_open_direct_tcpip(target.as_str(), target_port as u32, "127.0.0.1", local_port as u32).await {
+                let ready = first.lock().await.take();
+                let ch = match ready {
+                    Some(ch) => Ok(ch),
+                    None => session.channel_open_direct_tcpip(target.as_str(), target_port as u32, "127.0.0.1", local_port as u32).await,
+                };
+                match ch {
                     Ok(ch) => {
                         let mut stream = ch.into_stream();
                         let _ = tokio::io::copy_bidirectional(&mut tcp, &mut stream).await;
@@ -303,13 +337,23 @@ mod tests {
     async fn passphrase_key_needs_passphrase() {
         let Some(e) = env() else { return };
         let err = count_users(&cfg(&e, &e.host, SshAuth::Key, "user_key_pp", None)).await.unwrap_err();
-        assert!(err.contains("passphrase"), "{err}");
+        assert!(err.contains(PASSPHRASE_NEEDED), "{err}");
         let bad = count_users(&cfg(&e, &e.host, SshAuth::Key, "user_key_pp", Some("wrong"))).await.unwrap_err();
-        assert!(!bad.is_empty());
+        assert!(bad.contains(PASSPHRASE_WRONG), "{bad}");
         assert_eq!(
             count_users(&cfg(&e, &e.host, SshAuth::Key, "user_key_pp", Some("s3cret-phrase"))).await.unwrap(),
             "1200"
         );
+    }
+
+    #[tokio::test]
+    async fn unreachable_database_is_explained() {
+        let Some(e) = env() else { return };
+        // Signed in fine, but nothing listens on this port on the SSH server.
+        let mut c = cfg(&e, &e.host, SshAuth::Key, "user_key", None);
+        c.port = 5999;
+        let err = count_users(&c).await.unwrap_err();
+        assert!(err.contains("couldn't reach the database") && err.contains("5999"), "{err}");
     }
 
     #[tokio::test]

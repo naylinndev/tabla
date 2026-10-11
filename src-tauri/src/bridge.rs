@@ -125,6 +125,7 @@ async fn dispatch(state: &AppState, cmd: &str, a: Value) -> AppResult<Value> {
     Ok(match cmd {
         "list_connections" => json!(config::load()?),
         "save_connection" => json!(config::upsert(arg::<ConnectionConfig>(&a, "config")?)?),
+        "secret_status" => json!(config::secret_status(&arg::<String>(&a, "id")?)),
         "delete_connection" => json!(config::remove(&arg::<String>(&a, "id")?)?),
         "test_connection" => json!(state.test(arg(&a, "config")?).await?),
         "open_session" => json!(state.open(arg(&a, "config")?).await?),

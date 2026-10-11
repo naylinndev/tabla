@@ -296,6 +296,11 @@ pub fn save_connection(config: ConnectionConfig) -> AppResult<ConnectionConfig> 
 }
 
 #[tauri::command]
+pub fn secret_status(id: String) -> config::SecretStatus {
+    config::secret_status(&id)
+}
+
+#[tauri::command]
 pub fn delete_connection(id: String) -> AppResult<()> {
     config::remove(&id)
 }

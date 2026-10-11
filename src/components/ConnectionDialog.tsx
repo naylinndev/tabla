@@ -282,6 +282,11 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
   const bodyRef = useRef<HTMLFormElement>(null);
   const [sshSecret, setSshSecret] = useState(initial.sshSecret ?? "");
   const [sshTouched, setSshTouched] = useState(!!initial.sshSecret);
+  // Which secrets this connection already has in the keychain (shown as dots until "Change").
+  const [saved, setSaved] = useState({ password: false, sshSecret: false });
+  useEffect(() => {
+    if (!isNew) api.secretStatus(initial.id).then(setSaved).catch(() => {});
+  }, [isNew, initial.id]);
   const provider = providerById(f.provider, f.driver);
   const help = test && !test.ok ? explainError(test.msg, provider) : null;
 
@@ -583,16 +588,19 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
               </div>
               <div className="field">
                 <label>Password</label>
-                <input
-                  className="input mono"
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder={!isNew && !pwTouched ? "Saved in keychain" : ""}
+                <SecretField
+                  saved={!isNew && saved.password}
+                  touched={pwTouched}
                   value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
+                  what="password"
+                  onChange={(v) => {
+                    setPassword(v);
                     setPwTouched(true);
                     setTest(null);
+                  }}
+                  onKeep={() => {
+                    setPassword("");
+                    setPwTouched(false);
                   }}
                 />
               </div>
@@ -714,16 +722,19 @@ export function ConnectionDialog({ initial }: { initial: ConnectionConfig }) {
                 {f.ssh.auth !== "agent" ? (
                   <div className="field">
                     <label>{f.ssh.auth === "key" ? "Key passphrase (if the key has one)" : "SSH password"}</label>
-                    <input
-                      className="input mono"
-                      type="password"
-                      autoComplete="new-password"
-                      placeholder={!isNew && !sshTouched ? "Saved in keychain" : ""}
+                    <SecretField
+                      saved={!isNew && saved.sshSecret}
+                      touched={sshTouched}
                       value={sshSecret}
-                      onChange={(e) => {
-                        setSshSecret(e.target.value);
+                      what={f.ssh.auth === "key" ? "passphrase" : "SSH password"}
+                      onChange={(v) => {
+                        setSshSecret(v);
                         setSshTouched(true);
                         setTest(null);
+                      }}
+                      onKeep={() => {
+                        setSshSecret("");
+                        setSshTouched(false);
                       }}
                     />
                   </div>
@@ -953,5 +964,65 @@ function ProviderPicker({ value, onChange }: { value: string; onChange(p: Provid
         </div>
       ))}
     </div>
+  );
+}
+
+/**
+ * A password-like field. A secret already in the keychain shows as dots and stays
+ * untouched until "Change"; "Keep saved" goes back to it.
+ */
+function SecretField({
+  saved,
+  touched,
+  value,
+  what,
+  onChange,
+  onKeep,
+}: {
+  saved: boolean;
+  touched: boolean;
+  value: string;
+  what: string;
+  onChange(v: string): void;
+  onKeep(): void;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (saved && !touched && !editing) {
+    return (
+      <div className="secret-row">
+        <input className="input mono" type="password" value="••••••••••••" disabled aria-label={`Saved ${what}`} title={`${what[0].toUpperCase()}${what.slice(1)} saved in your keychain`} />
+        <button type="button" className="btn" onClick={() => setEditing(true)}>
+          Change
+        </button>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="secret-row">
+        <input
+          className="input mono"
+          type="password"
+          autoComplete="new-password"
+          autoFocus={editing}
+          placeholder={saved ? `New ${what}` : ""}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        {saved && (
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={() => {
+              setEditing(false);
+              onKeep();
+            }}
+          >
+            Keep saved
+          </button>
+        )}
+      </div>
+      {saved && touched && !value && <span className="hint warn">Saving with this empty removes the saved {what}.</span>}
+    </>
   );
 }

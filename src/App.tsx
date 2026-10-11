@@ -5,7 +5,7 @@ import { Rail, Workspace } from "./components/Workspace";
 import { ConnectionDialog } from "./components/ConnectionDialog";
 import { CommandPalette } from "./components/CommandPalette";
 import { AiConnect } from "./components/AiConnect";
-import { ConfirmDialogs } from "./components/Dialogs";
+import { ConfirmDialogs, UnlockKeyDialog } from "./components/Dialogs";
 import { RedisWorkspace } from "./components/RedisWorkspace";
 import { MongoWorkspace } from "./components/MongoWorkspace";
 import { localProblem } from "./lib/local";
@@ -103,6 +103,7 @@ export default function App() {
       )}
       {editing && <ConnectionDialog key={editing.id} initial={editing} />}
       <ConfirmDialogs />
+      <UnlockKeyDialog />
       <CommandPalette />
       <AiConnect />
       <Toasts />

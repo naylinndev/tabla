@@ -14,6 +14,16 @@ export function explainError(raw: string, provider?: Provider): ErrorHelp | null
   const hosted = provider && provider.group === "Cloud & hosted";
   const where = provider ? `${provider.label}'s dashboard` : "your provider's dashboard";
 
+  if (/couldn't reach the database/.test(m))
+    return {
+      title: "The SSH server can't reach the database",
+      tips: [
+        "Host and port on the Connection tab are looked up on the SSH server, not on your computer.",
+        "On the server, check which port the database uses: for Postgres, sudo ss -ltnp | grep postgres.",
+        "Try 127.0.0.1 instead of localhost: some databases listen on IPv4 only.",
+        "A Docker database may only be reachable at the container's address or its published port.",
+      ],
+    };
   if (/dpi-1047|dpi-1072|needs oracle instant client/.test(m))
     return {
       title: "Oracle Instant Client isn't installed",

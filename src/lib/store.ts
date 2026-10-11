@@ -69,7 +69,11 @@ interface State {
   loadConnections(): Promise<void>;
   saveConnection(c: ConnectionConfig): Promise<ConnectionConfig>;
   deleteConnection(id: string): Promise<void>;
-  openConnection(c: ConnectionConfig): Promise<void>;
+  /** Connects (or switches to an open session). Resolves true when connected. */
+  openConnection(c: ConnectionConfig): Promise<boolean>;
+  /** A connection waiting for its SSH key passphrase (shown as a dialog). */
+  unlock: { connection: ConnectionConfig; error?: string } | null;
+  setUnlock(u: { connection: ConnectionConfig; error?: string } | null): void;
   closeSession(id: string): Promise<void>;
   setActiveSession(id: string | null): void;
   setSchema(sessionId: string, schema: string): Promise<void>;
@@ -140,6 +144,7 @@ export const useApp = create<State>((set, get) => {
     sessions: [],
     activeSessionId: null,
     connecting: null,
+    unlock: null,
     theme: local.get<Theme>("tabla.theme", "system"),
     font: local.get<FontChoice>("tabla.font", "geist"),
     pending: {},
@@ -200,7 +205,12 @@ export const useApp = create<State>((set, get) => {
 
     async openConnection(c) {
       const existing = get().sessions.find((s) => s.connection.id === c.id);
-      if (existing) return set({ activeSessionId: existing.id });
+      if (existing) {
+        set({ activeSessionId: existing.id });
+        return true;
+      }
+      // A second click while connecting would only fail (or succeed) twice.
+      if (get().connecting === c.id) return false;
       set({ connecting: c.id });
       try {
         const info = await api.openSession(c);
@@ -225,8 +235,16 @@ export const useApp = create<State>((set, get) => {
         set((st) => ({ sessions: [...st.sessions, session], activeSessionId: session.id }));
         if (isSql(c.driver)) await get().refreshTables(session.id);
         else patchSession(session.id, () => ({ tablesLoading: false }));
+        return true;
       } catch (e) {
-        get().toast(`Couldn't connect to ${c.name}: ${errorMessage(e)}`, "error");
+        const msg = errorMessage(e);
+        // An SSH key that needs its passphrase: ask for it instead of failing.
+        if (c.ssh?.enabled && c.ssh.auth === "key" && PASSPHRASE_ERROR.test(msg)) {
+          set({ unlock: { connection: c, error: c.sshSecret ? msg : undefined } });
+        } else {
+          get().toast(`Couldn't connect to ${c.name}: ${msg}`, "error");
+        }
+        return false;
       } finally {
         set({ connecting: null });
       }
@@ -428,7 +446,13 @@ export const useApp = create<State>((set, get) => {
       set({ editing });
     },
 
+    setUnlock(unlock) {
+      set({ unlock });
+    },
+
     toast(message, kind = "info") {
+      // The same message twice in a row says nothing new.
+      if (get().toasts.some((t) => t.message === message && t.kind === kind)) return;
       const id = uid();
       set((st) => ({ toasts: [...st.toasts, { id, kind, message }] }));
       setTimeout(() => get().dismissToast(id), kind === "error" ? 7000 : 3500);
@@ -470,3 +494,6 @@ export function newConnection(): ConnectionConfig {
 export function isSystemSchema(s: Pick<Session, "systemSchemas">, schema: string) {
   return s.systemSchemas.includes(schema);
 }
+
+/** Matches the SSH tunnel's "needs a passphrase" and "wrong passphrase" errors (see ssh.rs). */
+const PASSPHRASE_ERROR = /protected by a passphrase|passphrase didn't unlock/i;

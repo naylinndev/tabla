@@ -4432,3 +4432,21 @@ pre.grants {
   font-size: 11.5px;
   color: var(--text-3);
 }
+
+/* Saved secret (dots + Change) and its edit state. */
+.secret-row {
+  display: flex;
+  gap: 6px;
+}
+.secret-row .input {
+  flex: 1;
+  min-width: 0;
+}
+.secret-row .input:disabled {
+  opacity: 1;
+  color: var(--text-3);
+  cursor: default;
+}
+.hint.warn {
+  color: var(--warn);
+}

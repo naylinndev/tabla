@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpCircle, Check, Copy, Monitor, Moon, Power, RefreshCw, Sun, SunMoon, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, Check, Copy, KeyRound, Monitor, Moon, Power, RefreshCw, Sun, SunMoon, TriangleAlert } from "lucide-react";
 import { api, errorMessage } from "../lib/api";
 import { formatBytes } from "../lib/format";
 import { Checkbox } from "./controls";
@@ -218,5 +218,71 @@ export function UpdateBanner() {
         </button>
       )}
     </div>
+  );
+}
+
+/** Asks for an SSH key's passphrase when connecting needs one, then connects. */
+export function UnlockKeyDialog() {
+  const unlock = useApp((s) => s.unlock);
+  const setUnlock = useApp((s) => s.setUnlock);
+  const openConnection = useApp((s) => s.openConnection);
+  const saveConnection = useApp((s) => s.saveConnection);
+  const toast = useApp((s) => s.toast);
+  const [value, setValue] = useState("");
+  const [remember, setRemember] = useState(true);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => setValue(""), [unlock]);
+  if (!unlock) return null;
+  const c = unlock.connection;
+  const close = () => setUnlock(null);
+  const connect = async () => {
+    if (!value || busy) return;
+    setBusy(true);
+    setUnlock(null);
+    const ok = await openConnection({ ...c, sshSecret: value });
+    // Only a passphrase that worked is worth keeping.
+    if (ok && remember) {
+      await saveConnection({ ...c, password: undefined, sshSecret: value }).catch((e) => toast(errorMessage(e), "error"));
+    }
+    setBusy(false);
+  };
+  return (
+    <Modal onClose={close}>
+      <div className="modal-head">
+        <KeyRound color="var(--accent-2)" />
+        <div>
+          <h2>Unlock your SSH key</h2>
+          <p>
+            {c.name} connects through {c.ssh.user || "root"}@{c.ssh.host}. Enter the passphrase for{" "}
+            <span className="mono">{c.ssh.keyPath}</span>.
+          </p>
+        </div>
+      </div>
+      <div className="modal-body">
+        <div className="field">
+          <label>Passphrase</label>
+          <input
+            className="input mono"
+            type="password"
+            autoFocus
+            autoComplete="off"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && connect()}
+          />
+          {unlock.error && <span className="hint warn">{unlock.error}</span>}
+        </div>
+        <Checkbox checked={remember} onChange={setRemember} label="Remember in my keychain" />
+      </div>
+      <div className="modal-foot">
+        <div className="spacer" />
+        <button className="btn" onClick={close}>
+          Cancel
+        </button>
+        <button className="btn primary" disabled={!value || busy} onClick={connect}>
+          Connect
+        </button>
+      </div>
+    </Modal>
   );
 }
