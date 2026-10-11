@@ -314,8 +314,12 @@ mod integration {
         Some((c, pw))
     }
 
-    #[tokio::test]
-    async fn clickhouse_end_to_end() {
+    #[test]
+    fn clickhouse_end_to_end() {
+        crate::test_lock::big_stack(end_to_end());
+    }
+
+    async fn end_to_end() {
         let Some((c, pw)) = cfg() else { return };
         let s = Session::connect(&c, pw.clone()).await.unwrap();
         assert!(!s.server_version().await.unwrap().is_empty());
@@ -419,8 +423,12 @@ mod integration {
         s.run_script("DROP VIEW ch_events_v; DROP TABLE ch_events", 1).await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn clickhouse_cancel() {
+    #[test]
+    fn clickhouse_cancel() {
+        crate::test_lock::big_stack(cancel());
+    }
+
+    async fn cancel() {
         let Some((c, pw)) = cfg() else { return };
         let s = Arc::new(Session::connect(&c, pw).await.unwrap());
         let s2 = s.clone();

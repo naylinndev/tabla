@@ -498,20 +498,9 @@ mod integration {
         }
     }
 
-    /// Runs a test body on a thread with a large stack (debug builds of the
-    /// TDS/TLS stack use deep call chains).
-    fn big_stack<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
-        std::thread::Builder::new()
-            .stack_size(32 << 20)
-            .spawn(move || tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_stack_size(32 << 20).enable_all().build().unwrap().block_on(f))
-            .unwrap()
-            .join()
-            .unwrap();
-    }
-
     #[test]
     fn mssql_end_to_end() {
-        big_stack(end_to_end());
+        crate::test_lock::big_stack(end_to_end());
     }
 
     async fn end_to_end() {
@@ -679,7 +668,7 @@ mod integration {
 
     #[test]
     fn mssql_cancel() {
-        big_stack(cancel());
+        crate::test_lock::big_stack(cancel());
     }
 
     async fn cancel() {

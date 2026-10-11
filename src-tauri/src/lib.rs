@@ -6,6 +6,18 @@ mod ai_guard;
 pub(crate) mod test_lock {
     pub static PG: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     pub static MYSQL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Runs an async test body on a thread with a large stack. Debug builds
+    /// of long end-to-end tests keep the whole body on the test thread's
+    /// 2 MB stack (the app itself spawns futures onto the heap).
+    pub fn big_stack<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
+        std::thread::Builder::new()
+            .stack_size(32 << 20)
+            .spawn(move || tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_stack_size(32 << 20).enable_all().build().unwrap().block_on(f))
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 }
 mod alter;
 #[cfg(debug_assertions)]
