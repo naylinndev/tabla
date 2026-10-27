@@ -306,21 +306,6 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for setup, tests and guidelines, and [SECURITY.md](SECURITY.md) to report a
 vulnerability privately.
 
-## Support Tabla
-
-Tabla is free and always will be. If it saves you time, you can support its
-development with a Bitcoin donation:
-
-<p align="center">
-  <img src="docs/donate-btc.svg" width="180" alt="Bitcoin donation QR code" />
-</p>
-
-<p align="center"><code>bc1qjssygyqayth4sm8zcw7kq56ml3rvl3vsm24qq9</code></p>
-
-Native SegWit (bc1q) address, on-chain Bitcoin only. Please double-check the
-address in your wallet before sending. Starring the repo, reporting bugs and
-sharing Tabla help a lot too.
-
 ## License
 
 Tabla is free forever, for everyone, under the [MIT License](LICENSE):
